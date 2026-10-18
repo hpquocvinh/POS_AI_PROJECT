@@ -1,143 +1,302 @@
 <?php
-// Gọi Model vào để sử dụng
-require_once 'Models/ProductModel.php';
+require_once APP_PATH . '/Models/ProductModel.php';
 
-class ProductController {
-    private $db;
+class ProductController extends Controller {
     private $productModel;
 
-    public function __construct($dbConnection) {
-        $this->db = $dbConnection;
-        // Khởi tạo Model ngay khi Controller được gọi
-        $this->productModel = new ProductModel($this->db);
+    public function __construct() {
+        $this->productModel = $this->model('ProductModel');
     }
 
-    // Action mặc định: Hiển thị danh sách sản phẩm
+    // Action: Hiển thị danh sách sản phẩm
     public function index() {
-        // 1. Nhờ Model lấy toàn bộ dữ liệu (đã JOIN với bảng categories)
         $products = $this->productModel->getAllProducts();
         
-        // 2. Gọi View (giao diện HTML) và "bơm" biến $products sang đó để in ra bảng
-        require_once 'Views/products/index.php';
+        $this->view('products/index', [
+            'products' => $products
+        ]);
     }
+
     // Action: Hiển thị Form thêm sản phẩm
     public function create() {
-        // Cần lấy danh sách Category để đổ vào thẻ <select>
-        // Giả sử ông đã có CategoryModel (nếu chưa có thì gọi truy vấn tạm hoặc tui sẽ cấp sau)
-        $stmt = $this->db->prepare("SELECT id, category_name FROM categories");
-        $stmt->execute();
-        $categories = $stmt->fetchAll(PDO::FETCH_OBJ);
+        $categoryModel = $this->model('CategoryModel');
+        $categories = $categoryModel ? $categoryModel->getAllCategories() : [];
 
-        require_once 'Views/products/create.php';
+        $this->view('products/create', [
+            'categories' => $categories
+        ]);
     }
 
-    // Action: Xử lý dữ liệu Submit từ Form
+    // Action: Xử lý dữ liệu Submit từ Form thêm mới
     public function store() {
-        if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-            $imageName = 'default.jpg'; // Tên ảnh mặc định nếu không upload
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $product_code   = trim($_POST['product_code'] ?? '');
+            $product_name   = trim($_POST['product_name'] ?? '');
+            $category_id    = $_POST['category_id'] ?? null;
+            $price          = (float)($_POST['price'] ?? 0);
+            $cost_price     = (float)($_POST['cost_price'] ?? 0);
+            $stock_quantity = (float)($_POST['stock_quantity'] ?? 0);
+            $status         = (int)($_POST['status'] ?? 1);
 
-            // Xử lý upload ảnh (nếu có)
-            if (isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
-                $targetDir = "public/uploads/";
-                // Đổi tên file để tránh trùng lặp
-                $imageName = time() . '_' . basename($_FILES["image"]["name"]); 
-                $targetFilePath = $targetDir . $imageName;
-                
-                // Di chuyển file vào thư mục
-                move_uploaded_file($_FILES["image"]["tmp_name"], $targetFilePath);
+            // 1. CHẶN DỮ LIỆU BẮT BUỘC BỊ TRỐNG
+            if (empty($product_code) || empty($product_name) || empty($category_id)) {
+                $_SESSION['error'] = "Vui lòng điền đầy đủ các trường bắt buộc (*)!";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
             }
 
-            // Gom dữ liệu từ Form gửi lên
+            // 2. CHECK GIÁ & TỒN KHO TRƯỚC
+            if ($price <= 0) {
+                $_SESSION['error'] = "Giá bán phải lớn hơn 0!";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
+            }
+
+            if ($cost_price < 0) {
+                $_SESSION['error'] = "Giá Cost không được là số âm!";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
+            }
+
+            if ($stock_quantity < 0) {
+                $_SESSION['error'] = "Số lượng tồn kho không được là số âm!";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
+            }
+
+            if ($cost_price >= $price) {
+                $_SESSION['error'] = "Giá bán phải lớn hơn giá cost!";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
+            }
+
+            // 3. CHECK TRÙNG MÃ SKU IN DATABASE
+            if ($this->productModel->checkCodeExists($product_code)) {
+                $_SESSION['error'] = "Mã SKU '{$product_code}' đã tồn tại trong hệ thống! Vui lòng nhập mã khác.";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
+            }
+
+            // 4. CHECK TRÙNG TÊN SẢN PHẨM IN DATABASE
+            if ($this->productModel->checkNameExists($product_name)) {
+                $_SESSION['error'] = "Sản phẩm tên '{$product_name}' đã tồn tại trong hệ thống! Vui lòng nhập tên khác.";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
+            }
+
+            // 5. XỬ LÝ UPLOAD HÌNH ẢNH
+            $imageName = 'default.jpg';
+            if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+                $uploadDir = __DIR__ . '/../../public/uploads/';
+                
+                if (!file_exists($uploadDir)) {
+                    mkdir($uploadDir, 0777, true);
+                }
+
+                $fileExtension = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
+                $imageName = time() . '_' . uniqid() . '.' . $fileExtension;
+                $targetFilePath = $uploadDir . $imageName;
+
+                move_uploaded_file($_FILES['image']['tmp_name'], $targetFilePath);
+            }
+
+            // 6. THÊM VÀO CƠ SỞ DỮ LIỆU
             $data = [
-                ':category_id' => $_POST['category_id'],
-                ':product_code' => $_POST['product_code'],
-                ':product_name' => $_POST['product_name'],
-                ':price' => $_POST['price'],
-                ':cost_price' => $_POST['cost_price'],
-                ':stock_quantity' => $_POST['stock_quantity'],
-                ':image' => $imageName,
-                ':status' => $_POST['status']
+                ':category_id'    => $category_id,
+                ':product_code'   => $product_code,
+                ':product_name'   => $product_name,
+                ':price'          => $price,
+                ':cost_price'     => $cost_price,
+                ':stock_quantity' => $stock_quantity,
+                ':image'          => $imageName,
+                ':status'         => $status
             ];
 
-            // Gọi Model để lưu vào DB
             if ($this->productModel->insertProduct($data)) {
-                // Thêm thành công thì chuyển hướng về trang danh sách
-                header("Location: ?controller=product&action=index");
-                exit();
+                $_SESSION['success'] = "Thêm sản phẩm mới thành công!";
+                header("Location: " . BASE_URL . "/product");
+                exit;
+            } else {
+                $_SESSION['error'] = "Đã xảy ra lỗi khi lưu sản phẩm vào CSDL!";
+                header("Location: " . BASE_URL . "/product/create");
+                exit;
             }
         }
     }
+
     // Action: Gọi giao diện Form Sửa
     public function edit() {
         $id = $_GET['id'] ?? 0;
         $product = $this->productModel->getProductById($id);
         
-        // Vẫn phải lấy danh sách Categories để đổ vào thẻ <select>
-        $stmt = $this->db->prepare("SELECT id, category_name FROM categories");
-        $stmt->execute();
-        $categories = $stmt->fetchAll(PDO::FETCH_OBJ);
+        $categoryModel = $this->model('CategoryModel');
+        $categories = $categoryModel ? $categoryModel->getAllCategories() : [];
 
-        if($product) {
-            require_once 'Views/products/edit.php';
+        if ($product) {
+            $this->view('products/edit', [
+                'product'    => $product,
+                'categories' => $categories
+            ]);
         } else {
-            header("Location: ?controller=product&action=index");
+            $_SESSION['error'] = "Không tìm thấy sản phẩm!";
+            header("Location: " . BASE_URL . "/product");
+            exit();
         }
     }
 
     // Action: Xử lý submit từ Form Sửa
     public function update() {
         if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-            $id = $_POST['id'];
-            $currentImage = $_POST['current_image'];
-            $imageName = $currentImage; // Mặc định giữ ảnh cũ nếu không up hình mới
+            $id           = $_POST['id'];
+            $product_code = trim($_POST['product_code'] ?? '');
+            $product_name = trim($_POST['product_name'] ?? '');
+            $category_id  = $_POST['category_id'] ?? null;
+            $price        = (float)($_POST['price'] ?? 0);
+            $cost_price   = (float)($_POST['cost_price'] ?? 0);
+            $stock_quantity = (float)($_POST['stock_quantity'] ?? 0);
+            $status       = (int)($_POST['status'] ?? 1);
 
-            // Nếu người dùng chọn upload ảnh mới
-            if (isset($_FILES['image']) && $_FILES['image']['error'] == 0) {
-                $imageName = time() . '_' . basename($_FILES["image"]["name"]); 
-                move_uploaded_file($_FILES["image"]["tmp_name"], "public/uploads/" . $imageName);
+            $currentProduct = $this->productModel->getProductById($id);
+            $currentImage   = $currentProduct ? $currentProduct->image : 'default.jpg';
+            $imageName      = $currentImage;
+
+            // 1. VALIDATE BẮT BUỘC
+            if (empty($product_code) || empty($product_name) || empty($category_id)) {
+                $_SESSION['error'] = "Vui lòng điền đầy đủ các trường bắt buộc (*)!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
+                exit;
+            }
+
+            // 2. LOGIC GIÁ & TỒN KHO
+            if ($price <= 0) {
+                $_SESSION['error'] = "Giá bán phải lớn hơn 0!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
+                exit;
+            }
+
+            if ($cost_price < 0) {
+                $_SESSION['error'] = "Giá Cost không được là số âm!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
+                exit;
+            }
+
+            if ($stock_quantity < 0) {
+                $_SESSION['error'] = "Số lượng tồn kho không được là số âm!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
+                exit;
+            }
+
+            if ($cost_price >= $price) {
+                $_SESSION['error'] = "Giá bán phải lớn hơn giá cost!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
+                exit;
+            }
+
+            // 3. CHECK TRÙNG MÃ SKU VÀ TÊN SẢN PHẨM (Đã truyền ID để loại trừ sản phẩm đang sửa)
+            if ($this->productModel->checkCodeExists($product_code, $id)) {
+                $_SESSION['error'] = "Mã SKU '{$product_code}' đã trùng với sản phẩm khác!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
+                exit;
+            }
+
+            if ($this->productModel->checkNameExists($product_name, $id)) {
+                $_SESSION['error'] = "Tên sản phẩm '{$product_name}' đã trùng với sản phẩm khác!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
+                exit;
+            }
+
+            // 4. XỬ LÝ UPLOAD ẢNH MỚI NẾU CÓ
+            if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+                $uploadDir = __DIR__ . '/../../public/uploads/';
+                $fileExtension = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
+                $imageName = time() . '_' . uniqid() . '.' . $fileExtension;
+                $targetFilePath = $uploadDir . $imageName;
+
+                if (move_uploaded_file($_FILES['image']['tmp_name'], $targetFilePath)) {
+                    if ($currentImage !== 'default.jpg' && file_exists($uploadDir . $currentImage)) {
+                        unlink($uploadDir . $currentImage);
+                    }
+                }
             }
 
             $data = [
-                ':id' => $id,
-                ':category_id' => $_POST['category_id'],
-                ':product_code' => $_POST['product_code'],
-                ':product_name' => $_POST['product_name'],
-                ':price' => $_POST['price'],
-                ':cost_price' => $_POST['cost_price'],
-                ':stock_quantity' => $_POST['stock_quantity'],
-                ':image' => $imageName,
-                ':status' => $_POST['status']
+                ':id'            => $id,
+                ':category_id'   => $category_id,
+                ':product_code'  => $product_code,
+                ':product_name'  => $product_name,
+                ':price'         => $price,
+                ':cost_price'    => $cost_price,
+                ':stock_quantity'=> $stock_quantity,
+                ':image'         => $imageName,
+                ':status'        => $status
             ];
 
             if ($this->productModel->updateProduct($data)) {
-                header("Location: ?controller=product&action=index");
+                $_SESSION['success'] = "Cập nhật sản phẩm thành công!";
+                header("Location: " . BASE_URL . "/product");
+                exit();
+            } else {
+                $_SESSION['error'] = "Cập nhật sản phẩm thất bại!";
+                header("Location: " . BASE_URL . "/product/edit?id=" . $id);
                 exit();
             }
         }
     }
+    // API Check trùng mã SKU qua AJAX
+    public function checkCode() {
+        header('Content-Type: application/json');
+        $code = trim($_GET['code'] ?? '');
+        $excludeId = $_GET['exclude_id'] ?? null;
+
+        if (empty($code)) {
+            echo json_encode(['exists' => false]);
+            exit;
+        }
+
+        $exists = $this->productModel->checkCodeExists($code, $excludeId);
+        echo json_encode(['exists' => $exists]);
+        exit;
+    }
+
+    // API Check trùng tên sản phẩm qua AJAX
+    public function checkName() {
+        header('Content-Type: application/json');
+        $name = trim($_GET['name'] ?? '');
+        $excludeId = $_GET['exclude_id'] ?? null;
+
+        if (empty($name)) {
+            echo json_encode(['exists' => false]);
+            exit;
+        }
+
+        $exists = $this->productModel->checkNameExists($name, $excludeId);
+        echo json_encode(['exists' => $exists]);
+        exit;
+    }
+
     // Action: Xóa sản phẩm
     public function delete() {
         $id = $_GET['id'] ?? 0;
         
         if ($id) {
-            // 1. Lấy thông tin sản phẩm để biết tên file ảnh cần xóa
             $product = $this->productModel->getProductById($id);
+            $uploadDir = __DIR__ . '/../../public/uploads/';
             
             if ($product && !empty($product->image) && $product->image != 'default.jpg') {
-                $imagePath = "public/uploads/" . $product->image;
-                // Kiểm tra file có tồn tại không thì xóa file vật lý
+                $imagePath = $uploadDir . $product->image;
                 if (file_exists($imagePath)) {
                     unlink($imagePath); 
                 }
             }
 
-            // 2. Xóa dữ liệu trong Database
-            $this->productModel->deleteProduct($id);
+            if ($this->productModel->deleteProduct($id)) {
+                $_SESSION['success'] = "Xóa sản phẩm thành công!";
+            } else {
+                $_SESSION['error'] = "Không thể xóa sản phẩm này!";
+            }
         }
 
-        // Xóa xong thì quay về trang danh sách
-        header("Location: ?controller=product&action=index");
+        header("Location: " . BASE_URL . "/product");
         exit();
     }
 }
-?>

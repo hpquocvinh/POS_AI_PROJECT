@@ -128,6 +128,14 @@
             border-radius: 12px;
             font-weight: 600;
         }
+
+        /* TỐI ƯU CẤU TRÚC RIÊNG CHO MÀN HÌNH POS (KHÔNG DÙNG PADDING DÀY TRÁNH ĐẨY CỘT PHẢI) */
+        .content-body-pos {
+            padding: 16px !important;
+            flex-grow: 1;
+            width: 100% !important;
+            box-sizing: border-box !important;
+        }
     </style>
 </head>
 <body>
@@ -143,29 +151,32 @@
     
     <div class="sidebar-menu">
         <div class="menu-header">TỔNG QUAN</div>
-        <a href="<?= BASE_URL ?>/dashboard" class="nav-link-custom active">
+        <a href="<?= BASE_URL ?>/dashboard" class="nav-link-custom">
             <i class="fa-solid fa-chart-pie"></i> Dashboard
         </a>
 
         <div class="menu-header">BÁN HÀNG & QUẢN LÝ</div>
-        <a href="#" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/pos" class="nav-link-custom">
             <i class="fa-solid fa-cash-register"></i> Màn Hình POS
         </a>
-        <a href="#" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/product" class="nav-link-custom">
             <i class="fa-solid fa-box-archive"></i> Sản Phẩm & Kho
         </a>
-        <a href="#" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/category" class="nav-link-custom">
+            <i class="fa-solid fa-layer-group"></i> Danh Mục
+        </a>
+        <a href="<?= BASE_URL ?>/order" class="nav-link-custom">
             <i class="fa-solid fa-receipt"></i> Đơn Hàng
         </a>
-        <a href="#" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/customer" class="nav-link-custom">
             <i class="fa-solid fa-users"></i> Khách Hàng
         </a>
 
         <div class="menu-header">TRÍ TUỆ NHÂN TẠO (AI)</div>
-        <a href="#" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/ai/forecast" class="nav-link-custom">
             <i class="fa-solid fa-brain"></i> Dự Báo Bán Hàng <span class="badge-ai-pill ms-auto">AI</span>
         </a>
-        <a href="#" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/ai/trends" class="nav-link-custom">
             <i class="fa-solid fa-chart-line"></i> Phân Tích Xu Hướng
         </a>
     </div>
@@ -176,8 +187,8 @@
                 <?= strtoupper(substr($_SESSION['user']['username'] ?? 'A', 0, 1)) ?>
             </div>
             <div class="flex-grow-1 overflow-hidden">
-                <h6 class="text-white mb-0 text-truncate font-size-14"><?= $_SESSION['user']['fullname'] ?? 'User' ?></h6>
-                <small class="text-muted d-block text-capitalize"><?= $_SESSION['user']['role'] ?? 'cashier' ?></small>
+                <h6 class="text-white mb-0 text-truncate font-size-14"><?= $_SESSION['user']['fullname'] ?? 'Quản Trị Viên' ?></h6>
+                <small class="text-muted d-block text-capitalize"><?= $_SESSION['user']['role'] ?? 'admin' ?></small>
             </div>
             <a href="<?= BASE_URL ?>/auth/logout" class="text-danger ms-2" title="Đăng xuất">
                 <i class="fa-solid fa-right-from-bracket"></i>
@@ -205,4 +216,4 @@
     </header>
 
     <!-- Content Body -->
-    <main class="content-body">
+    <main class="<?= (strpos($_SERVER['REQUEST_URI'], 'pos') !== false) ? 'content-body-pos' : 'content-body' ?>">
