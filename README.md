@@ -57,7 +57,7 @@ POS_AI_PROJECT/
 
 ### 2. Các bước cài đặt
 1. Clone repository:
-   git clone https://github.com/username/POS_AI_PROJECT.git
+   git clone https://github.com/hpquocvinh/POS_AI_PROJECT.git
    cd POS_AI_PROJECT
 
 2. Cấu hình Cơ sở dữ liệu:
