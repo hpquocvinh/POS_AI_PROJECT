@@ -1,28 +1,33 @@
-SMART F&B POS & AI System
+# SMART F&B POS & AI System
+
 Hệ thống Quản lý Bán hàng (POS) tích hợp AI hỗ trợ phân tích và dự báo nhu cầu bán hàng cho ngành F&B. Dự án được thiết kế theo kiến trúc PHP MVC và mô hình dữ liệu chuẩn 3NF.
 
-Công nghệ sử dụng
-Backend: PHP 8 (Kiến trúc MVC, Front Controller, PDO Prepared Statements)
+---
 
-Database: MySQL / MariaDB (Hệ thống 13 bảng chuẩn 3NF: areas, categories, customers, forecast_results, orders, order_details, products, reservations, rewards, shifts, system_settings, tables, users)
+## Công nghệ sử dụng
 
-Frontend: Bootstrap 5, JavaScript (ES6, Fetch API), ApexCharts, FontAwesome 6
+- **Backend:** PHP 8 (Kiến trúc MVC, Front Controller, PDO Prepared Statements)
+- **Database:** MySQL / MariaDB (Hệ thống 13 bảng chuẩn 3NF: `areas`, `categories`, `customers`, `forecast_results`, `orders`, `order_details`, `products`, `reservations`, `rewards`, `shifts`, `system_settings`, `tables`, `users`)
+- **Frontend:** Bootstrap 5, JavaScript (ES6, Fetch API), ApexCharts, FontAwesome 6
+- **AI / Forecasting Module:** Python (Prophet / Machine Learning, RESTful API)
 
-AI / Forecasting Module: Python (Prophet / Machine Learning, RESTful API)
+---
 
-Cấu trúc dự án
+## Cấu trúc dự án
+
+```text
 POS_AI_PROJECT/
 ├── ai_module/           # Phân hệ AI & Mô hình dự đoán nhu cầu bán hàng (Python)
 ├── docs/                # Sơ đồ thiết kế UML (ERD 13 bảng, Use Case, Sequence...)
 └── web_pos/             # Mã nguồn Hệ thống POS (Web Application)
-├── app/
-│   ├── Controllers/ # Điều phối logic nghiệp vụ (Order, Product, Shift, Customer...)
-│   ├── Core/        # Core Framework (App, Controller, Database PDO)
-│   ├── Models/      # Tương tác Cơ sở dữ liệu MySQL
-│   └── Views/       # Giao diện POS & Admin (Layouts, POS, Reports...)
-├── config/          # Cấu hình hệ thống & Kết nối CSDL pos_ai_db
-└── public/          # Assets tĩnh (CSS, JS) & Thư mục Uploads hình ảnh
-
+    ├── app/
+    │   ├── Controllers/ # Điều phối logic nghiệp vụ (Order, Product, Shift, Customer...)
+    │   ├── Core/        # Core Framework (App, Controller, Database PDO)
+    │   ├── Models/      # Tương tác Cơ sở dữ liệu MySQL
+    │   └── Views/       # Giao diện POS & Admin (Layouts, POS, Reports...)
+    ├── config/          # Cấu hình hệ thống & Kết nối CSDL pos_ai_db
+    └── public/          # Assets tĩnh (CSS, JS) & Thư mục Uploads hình ảnh
+    
 ## Các phân hệ & Chức năng chính
 # 1. Phân hệ Bán hàng POS đa kênh (Multi-channel POS)
 
