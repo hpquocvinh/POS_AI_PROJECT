@@ -12,7 +12,10 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <!-- ApexCharts -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/apexcharts@3.45.1/dist/apexcharts.css">
-    
+    <!-- Modern SaaS Admin Theme -->
+    <?php $assetBase = (strpos(BASE_URL, '/public') !== false) ? BASE_URL : (BASE_URL . '/public'); ?>
+    <link rel="stylesheet" href="<?= $assetBase ?>/css/modern-admin.css?v=<?= time() ?>">
+    <link rel="stylesheet" href="/POS_AI_PROJECT/web_pos/public/css/modern-admin.css?v=<?= time() ?>">
     <style>
         :root {
             --sidebar-width: 260px;
@@ -28,7 +31,6 @@
             color: #334155;
             overflow-x: hidden;
         }
-        /* Sidebar Styling */
         .sidebar {
             width: var(--sidebar-width);
             height: 100vh;
@@ -87,8 +89,6 @@
             width: 24px;
             font-size: 16px;
         }
-        
-        /* Main Layout & Fix Tràn Màn Hình */
         .main-wrapper {
             margin-left: var(--sidebar-width);
             width: calc(100% - var(--sidebar-width));
@@ -118,7 +118,7 @@
             border-radius: 16px;
             border: 1px solid #e2e8f0;
             box-shadow: var(--card-shadow);
-            min-width: 0; /* Fix lỗi vỡ biểu đồ ApexCharts */
+            min-width: 0;
         }
         .badge-ai-pill {
             background: linear-gradient(135deg, #a855f7 0%, #6366f1 100%);
@@ -128,17 +128,52 @@
             border-radius: 12px;
             font-weight: 600;
         }
-
-        /* TỐI ƯU CẤU TRÚC RIÊNG CHO MÀN HÌNH POS (KHÔNG DÙNG PADDING DÀY TRÁNH ĐẨY CỘT PHẢI) */
         .content-body-pos {
             padding: 16px !important;
             flex-grow: 1;
             width: 100% !important;
             box-sizing: border-box !important;
         }
+        .branch-selector-box {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 999px;
+            padding: 4px 12px;
+        }
+        .branch-selector-box select {
+            border: none !important;
+            background: transparent !important;
+            font-size: 12.5px !important;
+            font-weight: 700 !important;
+            color: #0f172a !important;
+            height: auto !important;
+            padding: 2px 22px 2px 2px !important;
+            cursor: pointer;
+        }
+        .branch-selector-box select:focus {
+            box-shadow: none !important;
+        }
     </style>
 </head>
 <body>
+
+<?php
+$currentUri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$basePath   = parse_url(BASE_URL, PHP_URL_PATH) ?? '';
+$route      = '/' . trim(str_replace($basePath, '', $currentUri), '/');
+if ($route === '/') {
+    $route = '/dashboard';
+}
+
+if (!function_exists('isMenuActive')) {
+    function isMenuActive($prefix, $route) {
+        return ($route === $prefix || strpos($route, $prefix . '/') === 0) ? 'active' : '';
+    }
+}
+?>
 
 <!-- Sidebar Menu -->
 <aside class="sidebar">
@@ -151,32 +186,32 @@
     
     <div class="sidebar-menu">
         <div class="menu-header">TỔNG QUAN</div>
-        <a href="<?= BASE_URL ?>/dashboard" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/dashboard" class="nav-link-custom <?= isMenuActive('/dashboard', $route) ?>">
             <i class="fa-solid fa-chart-pie"></i> Dashboard
         </a>
 
         <div class="menu-header">BÁN HÀNG & QUẢN LÝ</div>
-        <a href="<?= BASE_URL ?>/pos" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/pos" class="nav-link-custom <?= isMenuActive('/pos', $route) ?>">
             <i class="fa-solid fa-cash-register"></i> Màn Hình POS
         </a>
-        <a href="<?= BASE_URL ?>/product" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/product" class="nav-link-custom <?= isMenuActive('/product', $route) ?>">
             <i class="fa-solid fa-box-archive"></i> Sản Phẩm & Kho
         </a>
-        <a href="<?= BASE_URL ?>/category" class="nav-link-custom">
-            <i class="fa-solid fa-layer-group"></i> Danh Mục
+        <a href="<?= BASE_URL ?>/category" class="nav-link-custom <?= isMenuActive('/category', $route) ?>">
+            <i class="fa-solid fa-layer-group"></i> Quản Lý Danh Mục 
         </a>
-        <a href="<?= BASE_URL ?>/order" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/order" class="nav-link-custom <?= isMenuActive('/order', $route) ?>">
             <i class="fa-solid fa-receipt"></i> Đơn Hàng
         </a>
-        <a href="<?= BASE_URL ?>/customer" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/customer" class="nav-link-custom <?= isMenuActive('/customer', $route) ?>">
             <i class="fa-solid fa-users"></i> Khách Hàng
         </a>
 
         <div class="menu-header">TRÍ TUỆ NHÂN TẠO (AI)</div>
-        <a href="<?= BASE_URL ?>/ai/forecast" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/ai/forecast" class="nav-link-custom <?= isMenuActive('/ai/forecast', $route) ?>">
             <i class="fa-solid fa-brain"></i> Dự Báo Bán Hàng <span class="badge-ai-pill ms-auto">AI</span>
         </a>
-        <a href="<?= BASE_URL ?>/ai/trends" class="nav-link-custom">
+        <a href="<?= BASE_URL ?>/ai/trends" class="nav-link-custom <?= isMenuActive('/ai/trends', $route) ?>">
             <i class="fa-solid fa-chart-line"></i> Phân Tích Xu Hướng
         </a>
     </div>
@@ -205,6 +240,17 @@
             <h5 class="fw-bold m-0 text-dark">Hệ Thống Quản Lý Bán Hàng Chuỗi F&B Tích Hợp AI</h5>
         </div>
         <div class="d-flex align-items-center gap-3">
+            <!-- BỘ LỌC ĐA CHI NHÁNH (ĐỒNG BỘ VỚI POS) -->
+            <div class="branch-selector-box" title="Chuyển đổi chi nhánh vận hành">
+                <i class="fa-solid fa-store text-primary" style="font-size: 13px;"></i>
+                <select id="global-branch-selector" class="form-select form-select-sm" onchange="handleGlobalBranchChange(this)">
+                    <option value="CN01">CN Bình Thạnh (Trụ sở)</option>
+                    <option value="CN02">CN Quận 1 (Nguyễn Huệ)</option>
+                    <option value="CN03">CN Quận 3 (Võ Văn Tần)</option>
+                    <option value="CN04">CN Thủ Đức (Võ Văn Ngân)</option>
+                </select>
+            </div>
+
             <span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 rounded-pill">
                 <i class="fa-solid fa-circle-dot me-1"></i> Database Online
             </span>
@@ -214,6 +260,31 @@
             </a>
         </div>
     </header>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const branchSel = document.getElementById('global-branch-selector');
+            if (branchSel) {
+                const savedBranch = localStorage.getItem('pos_selected_branch') || localStorage.getItem('smart_fnb_active_branch') || 'CN01';
+                branchSel.value = savedBranch;
+            }
+        });
+        function handleGlobalBranchChange(sel) {
+            localStorage.setItem('pos_selected_branch', sel.value);
+            localStorage.setItem('smart_fnb_active_branch', sel.value);
+            const posBranchSel = document.getElementById('pos-branch-select');
+            if (posBranchSel && posBranchSel.value !== sel.value) {
+                posBranchSel.value = sel.value;
+            }
+            if (typeof currentBranchId !== 'undefined') {
+                currentBranchId = sel.value;
+            }
+            const branchName = sel.options[sel.selectedIndex].text;
+            if (typeof showCustomAlert === 'function') {
+                showCustomAlert('Đã chuyển hệ thống vận hành sang: ' + branchName, 'Đa Chi Nhánh Chuỗi', 'info');
+            }
+        }
+    </script>
 
     <!-- Content Body -->
     <main class="<?= (strpos($_SERVER['REQUEST_URI'], 'pos') !== false) ? 'content-body-pos' : 'content-body' ?>">

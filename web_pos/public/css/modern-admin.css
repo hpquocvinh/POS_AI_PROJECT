@@ -1,0 +1,504 @@
+/* ==========================================================================
+   SMART F&B POS - MODERN SAAS ADMIN DESIGN SYSTEM (COMPLETE EDITION)
+   Đồng bộ 100% ngôn ngữ thiết kế Màn Hình POS (#0f172a / #4f46e5 / #f8fafc)
+   ========================================================================== */
+
+:root {
+    --sa-dark: #0f172a;
+    --sa-dark-hover: #1e293b;
+    --sa-primary: #4f46e5;
+    --sa-primary-hover: #4338ca;
+    --sa-primary-soft: #eef2ff;
+    --sa-bg: #f8fafc;
+    --sa-surface: #ffffff;
+    --sa-border: #e2e8f0;
+    --sa-border-hover: #cbd5e1;
+    --sa-text-main: #1e293b;
+    --sa-text-muted: #64748b;
+    --sa-radius-lg: 14px;
+    --sa-radius-md: 10px;
+    --sa-radius-sm: 8px;
+}
+
+/* 1. NỀN TỔNG THỂ & TYPOGRAPHY */
+body {
+    background-color: var(--sa-bg) !important;
+    color: var(--sa-text-main);
+    font-size: 13.5px;
+    line-height: 1.5;
+}
+
+h2,
+h3,
+h4,
+h5 {
+    color: var(--sa-dark);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.text-muted.small,
+p.text-muted {
+    color: var(--sa-text-muted) !important;
+    font-size: 13px;
+}
+
+/* 2. CARD & KHUNG CHỨA (ĐỒNG BỘ VỚI .pos-card) */
+.card,
+.card-custom {
+    background: var(--sa-surface) !important;
+    border: 1px solid var(--sa-border) !important;
+    border-radius: var(--sa-radius-lg) !important;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02) !important;
+    transition: box-shadow 0.2s ease;
+}
+
+/* 3. TAB CHUYỂN ĐỔI (SẢN PHẨM BÁN / KHO NGUYÊN LIỆU / DANH MỤC) */
+.nav-pills {
+    background-color: #f1f5f9 !important;
+    padding: 4px !important;
+    border-radius: 12px !important;
+    display: inline-flex !important;
+    gap: 4px !important;
+    border: 1px solid var(--sa-border) !important;
+}
+
+.nav-pills .nav-link {
+    border: none !important;
+    background: transparent !important;
+    color: var(--sa-text-muted) !important;
+    border-radius: 9px !important;
+    padding: 8px 16px !important;
+    font-weight: 700 !important;
+    font-size: 13px !important;
+    transition: all 0.2s ease !important;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.nav-pills .nav-link:hover {
+    color: var(--sa-dark) !important;
+    background-color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.nav-pills .nav-link.active {
+    background-color: var(--sa-dark) !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.15) !important;
+}
+
+.nav-pills .nav-link.active .badge.bg-light {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    color: #ffffff !important;
+    border: none !important;
+}
+
+/* 4. HỆ THỐNG NÚT HÀNH ĐỘNG CHÍNH & PHỤ */
+.btn,
+.modal .btn {
+    font-weight: 600;
+    font-size: 13px;
+    transition: all 0.18s ease;
+}
+
+/* Nút chính (+ Thêm Sản Phẩm Mới, + Thêm Nguyên Liệu, Lưu, Cập nhật) */
+.btn-primary:not(.btn-sm):not(.cat-filter-pill),
+.btn-success:not(.btn-sm),
+.modal .btn-primary:not(.btn-sm),
+.modal .btn-success:not(.btn-sm),
+.modal .btn-info:not(.btn-sm),
+.modal .btn-warning:not(.btn-sm) {
+    background-color: var(--sa-dark) !important;
+    border-color: var(--sa-dark) !important;
+    color: #ffffff !important;
+    border-radius: 10px !important;
+    padding: 9px 18px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.12) !important;
+}
+
+.btn-primary:not(.btn-sm):not(.cat-filter-pill):hover,
+.btn-success:not(.btn-sm):hover,
+.modal .btn-primary:not(.btn-sm):hover,
+.modal .btn-success:not(.btn-sm):hover,
+.modal .btn-info:not(.btn-sm):hover,
+.modal .btn-warning:not(.btn-sm):hover {
+    background-color: var(--sa-dark-hover) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.18) !important;
+}
+
+/* Nút phụ (Xóa bộ lọc, Quay lại, Hủy) */
+.btn-outline-secondary,
+.btn-light,
+.modal .btn-outline-secondary,
+.modal .btn-light {
+    background-color: #ffffff !important;
+    border: 1px solid var(--sa-border) !important;
+    color: var(--sa-text-muted) !important;
+    border-radius: 10px !important;
+    padding: 8px 16px !important;
+}
+
+.btn-outline-secondary:hover,
+.btn-light:hover,
+.modal .btn-outline-secondary:hover,
+.modal .btn-light:hover {
+    background-color: #f1f5f9 !important;
+    border-color: var(--sa-border-hover) !important;
+    color: var(--sa-dark) !important;
+}
+
+/* 5. Ô INPUT, SELECT, THANH TÌM KIẾM & FORM NHẬP LIỆU */
+.form-control,
+.form-select,
+.modal .form-control,
+.modal .form-select {
+    height: 40px;
+    border-radius: var(--sa-radius-sm) !important;
+    border: 1px solid var(--sa-border) !important;
+    font-size: 13px;
+    color: var(--sa-text-main);
+    background-color: #ffffff;
+    box-shadow: none !important;
+    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.form-control-lg,
+.modal .form-control-lg {
+    height: 46px !important;
+    font-size: 15px !important;
+}
+
+.form-control-sm,
+.form-select-sm,
+.modal .form-control-sm,
+.modal .form-select-sm {
+    height: 32px !important;
+    font-size: 12.5px !important;
+}
+
+textarea.form-control,
+.modal textarea.form-control {
+    height: auto !important;
+    min-height: 84px;
+}
+
+.form-control:focus,
+.form-select:focus,
+.modal .form-control:focus,
+.modal .form-select:focus {
+    border-color: var(--sa-dark) !important;
+    box-shadow: 0 0 0 3px rgba(15, 23, 42, 0.08) !important;
+}
+
+.form-label,
+.modal .form-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--sa-text-main);
+    margin-bottom: 6px;
+}
+
+/* Input group (icon kính lúp / đơn vị đ) */
+.input-group > .input-group-text:first-child {
+    border-top-left-radius: var(--sa-radius-sm) !important;
+    border-bottom-left-radius: var(--sa-radius-sm) !important;
+    border-color: var(--sa-border) !important;
+    background-color: #ffffff !important;
+    color: var(--sa-text-muted);
+}
+
+.input-group > .form-control:not(:first-child) {
+    border-top-left-radius: 0 !important;
+    border-bottom-left-radius: 0 !important;
+}
+
+.input-group > .form-control:not(:last-child) {
+    border-top-right-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+}
+
+.input-group > .input-group-text:last-child,
+.input-group > .btn:last-child {
+    border-top-right-radius: var(--sa-radius-sm) !important;
+    border-bottom-right-radius: var(--sa-radius-sm) !important;
+    border-color: var(--sa-border) !important;
+}
+
+/* 6. BẢNG DỮ LIỆU HIỆN ĐẠI (MODERN DATA TABLE) */
+.table-responsive {
+    border: 1px solid var(--sa-border) !important;
+    border-radius: 12px !important;
+    overflow-x: auto;
+    background: #ffffff;
+}
+
+.table-responsive::-webkit-scrollbar {
+    height: 6px;
+}
+.table-responsive::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 10px;
+}
+
+.table {
+    margin-bottom: 0;
+    vertical-align: middle;
+}
+
+.table thead th {
+    background-color: #f8fafc !important;
+    color: var(--sa-text-muted) !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 12px 12px !important;
+    border-bottom: 1px solid var(--sa-border) !important;
+    white-space: nowrap;
+}
+
+.table tbody td {
+    padding: 11px 12px !important;
+    border-bottom: 1px solid #f1f5f9 !important;
+    font-size: 13px !important;
+    color: var(--sa-text-main);
+    font-variant-numeric: tabular-nums;
+}
+
+.table tbody tr {
+    transition: background-color 0.15s ease;
+}
+
+.table tbody tr:hover {
+    background-color: #f8fafc !important;
+}
+
+.table tbody tr:last-child td {
+    border-bottom: none !important;
+}
+
+/* Cảnh báo FEFO & Tồn kho thấp trên dòng bảng (dịu mắt, dễ đọc) */
+.table tbody tr.table-warning {
+    background-color: #fffbeb !important;
+}
+.table tbody tr.table-warning:hover {
+    background-color: #fef3c7 !important;
+}
+
+.table tbody tr.table-danger {
+    background-color: #fef2f2 !important;
+}
+.table tbody tr.table-danger:hover {
+    background-color: #fee2e2 !important;
+}
+
+/* Giá bán dùng đúng màu Indigo thương hiệu POS */
+.table td.text-primary {
+    color: var(--sa-primary) !important;
+}
+
+/* 7. SOFT PILL BADGES (THAY BADGE ĐẶC CHÓI MẮT BẰNG PASTEL TINH TẾ) */
+.badge,
+.modal .badge {
+    font-weight: 600 !important;
+    font-size: 11px !important;
+    padding: 4px 10px !important;
+    border-radius: 20px !important;
+    letter-spacing: 0.01em;
+}
+
+.badge.bg-success,
+.badge.bg-success-subtle,
+.modal .badge.bg-success {
+    background-color: #ecfdf5 !important;
+    color: #059669 !important;
+    border: 1px solid #a7f3d0 !important;
+}
+
+.badge.bg-danger,
+.badge.bg-danger-subtle,
+.modal .badge.bg-danger {
+    background-color: #fef2f2 !important;
+    color: #dc2626 !important;
+    border: 1px solid #fecaca !important;
+}
+
+.badge.bg-warning,
+.badge.bg-warning-subtle,
+.modal .badge.bg-warning {
+    background-color: #fffbeb !important;
+    color: #d97706 !important;
+    border: 1px solid #fde68a !important;
+}
+
+.badge.bg-info,
+.badge.bg-info-subtle,
+.badge.bg-primary,
+.badge.bg-primary-subtle,
+.modal .badge.bg-info,
+.modal .badge.bg-primary {
+    background-color: #eef2ff !important;
+    color: #4f46e5 !important;
+    border: 1px solid #c7d2fe !important;
+}
+
+.badge.bg-light,
+.badge.bg-secondary,
+.modal .badge.bg-secondary {
+    background-color: #f8fafc !important;
+    color: #475569 !important;
+    border: 1px solid #e2e8f0 !important;
+}
+
+/* 8. CỤM NÚT THAO TÁC TRONG BẢNG (THANH THOÁT, KHÔNG VIỀN GẮT) */
+.table .btn-sm {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 5px 10px !important;
+    border-radius: 8px !important;
+    border: 1px solid transparent !important;
+    box-shadow: none !important;
+    transition: all 0.15s ease !important;
+}
+
+.table .btn-sm.rounded-circle {
+    border-radius: 50% !important;
+    padding: 0 !important;
+    border: 1px solid var(--sa-border) !important;
+}
+
+/* Nút Nhập kho: nền xanh ngọc nhạt, không viền cứng */
+.table .btn-success.btn-sm {
+    background-color: #ecfdf5 !important;
+    color: #059669 !important;
+}
+.table .btn-success.btn-sm:hover {
+    background-color: #059669 !important;
+    color: #ffffff !important;
+}
+
+/* Nút Kiểm kê: nền tím nhạt đồng bộ POS, không viền cứng */
+.table .btn-info.btn-sm,
+.table .btn-outline-info.btn-sm {
+    background-color: #eef2ff !important;
+    color: #4f46e5 !important;
+}
+.table .btn-info.btn-sm:hover,
+.table .btn-outline-info.btn-sm:hover {
+    background-color: #4f46e5 !important;
+    color: #ffffff !important;
+}
+
+/* Nút Thẻ kho, Sửa, Xóa */
+.table .btn-outline-secondary.btn-sm {
+    background-color: #ffffff !important;
+    color: var(--sa-text-muted) !important;
+}
+.table .btn-outline-secondary.btn-sm:hover {
+    background-color: var(--sa-dark) !important;
+    color: #ffffff !important;
+}
+
+.table .btn-outline-warning.btn-sm {
+    background-color: #ffffff !important;
+    color: #d97706 !important;
+}
+.table .btn-outline-warning.btn-sm:hover {
+    background-color: #fffbeb !important;
+    border-color: #fde68a !important;
+}
+
+.table .btn-outline-danger.btn-sm {
+    background-color: #ffffff !important;
+    color: #dc2626 !important;
+}
+.table .btn-outline-danger.btn-sm:hover {
+    background-color: #fef2f2 !important;
+    border-color: #fecaca !important;
+}
+
+/* Sửa lỗi mất padding ở khung quy đổi đơn vị trong Modal */
+.modal .bg-light.rounded-3.border {
+    padding: 14px 16px !important;
+    background-color: #f8fafc !important;
+}
+
+/* Giữ cột Tên nguyên liệu rộng rãi */
+#ingredientTable th:nth-child(2),
+#ingredientTable td:nth-child(2) {
+    min-width: 200px !important;
+}
+
+/* 9. PILL LỌC NHÓM TRONG KHO NGUYÊN LIỆU (BO TRÒN MƯỢT NHƯ TRANG DANH MỤC) */
+.ing-cat-pill {
+    background: #ffffff !important;
+    border: 1px solid var(--sa-border) !important;
+    color: var(--sa-text-muted) !important;
+    border-radius: 999px !important;
+    padding: 6px 14px !important;
+    font-size: 12.5px !important;
+    font-weight: 600 !important;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s ease;
+}
+.ing-cat-pill:hover {
+    border-color: var(--sa-dark) !important;
+    color: var(--sa-dark) !important;
+}
+.ing-cat-pill.active {
+    background: var(--sa-primary) !important;
+    border-color: var(--sa-primary) !important;
+    color: #ffffff !important;
+    box-shadow: 0 3px 8px rgba(79, 70, 229, 0.25) !important;
+}
+.ing-cat-pill.active .badge {
+    background: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
+    border: none !important;
+}
+
+/* 10. MODAL POPUP HIỆN ĐẠI */
+.modal-backdrop.show {
+    backdrop-filter: blur(2px);
+    background-color: rgba(15, 23, 42, 0.45);
+}
+
+.modal-content {
+    border: 1px solid var(--sa-border) !important;
+    border-radius: 16px !important;
+    box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.08) !important;
+}
+
+.modal-header {
+    padding: 18px 22px 14px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.modal-header h5,
+.modal-title {
+    font-weight: 700;
+    color: var(--sa-dark);
+    font-size: 16px;
+}
+
+.modal-body {
+    padding: 18px 22px;
+}
+
+.modal-footer {
+    padding: 12px 22px 18px;
+    border-top: 1px solid #f1f5f9;
+}
+/* Bung padding cho tất cả khung xám nhạt trong Modal (Kiểm kê, Chênh lệch, Quy đổi) */
+.modal .bg-light.rounded-3,
+.modal .bg-light.rounded {
+    padding: 12px 16px !important;
+    background-color: #f8fafc !important;
+    border: 1px solid var(--sa-border) !important;
+}

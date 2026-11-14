@@ -40,17 +40,22 @@ class OrderModel {
 
     // 2. Lấy Danh mục sản phẩm
     public function getCategories() {
-        $stmt = $this->db->query("SELECT id, category_name AS name FROM categories ORDER BY id ASC");
+        $stmt = $this->db->query("SELECT * FROM categories WHERE type = 'product' AND status = 1 ORDER BY id ASC");
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    // 3. Lấy Danh sách Sản phẩm
+    // 3. Lấy Danh sách Sản phẩm (Kèm min_stock & expiry_date để cảnh báo Real-time trên POS)
     public function getProducts() {
-        $stmt = $this->db->query("SELECT id, category_id, product_name AS name, price, stock_quantity, image AS image_url FROM products WHERE status = 1 ORDER BY id DESC");
+        $sql = "SELECT p.id, p.category_id, p.product_name AS name, p.price, p.stock_quantity, p.min_stock, p.expiry_date, p.manage_stock, p.image AS image_url, p.modifiers_config
+                FROM products p
+                INNER JOIN categories c ON p.category_id = c.id
+                WHERE p.status = 1 AND c.type = 'product' AND c.status = 1 
+                ORDER BY p.id DESC";
+        $stmt = $this->db->query($sql);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    // 4. TÌM KIẾM HOẶC TẠO KHÁCH HÀNG THEO SĐT (TÍCH ĐIỂM LOYALTY)
+    // 4. TÌM KIẾM HOẶC TẠO KHÁCH HÀNG THEO SĐT
     public function getOrCreateCustomerByPhone($phone, $name = 'Khách Lẻ') {
         $stmt = $this->db->prepare("SELECT * FROM customers WHERE phone = ?");
         $stmt->execute([$phone]);
@@ -78,7 +83,7 @@ class OrderModel {
         try {
             $this->db->beginTransaction();
 
-            $orderType      = $data['order_type'] ?? 'dine_in'; // dine_in, takeaway, grab, shopee
+            $orderType      = $data['order_type'] ?? 'dine_in';
             $tableId        = !empty($data['table_id']) ? (int)$data['table_id'] : null;
             $orderCode      = $data['order_code'] ?? ('HD' . time());
             $appOrderCode   = $data['app_order_code'] ?? null;
@@ -95,10 +100,8 @@ class OrderModel {
             $finalAmount    = (float)($data['final_amount'] ?? $totalAmount);
             $commissionRate = (float)($data['commission_rate'] ?? 0);
             
-            // Tính Doanh thu thực nhận sau trừ hoa hồng sàn (nếu là đơn App)
             $netAmount = $finalAmount - ($finalAmount * ($commissionRate / 100));
 
-            // Logic Tích điểm theo Hạng Thành Viên
             $pointsEarned   = (int)($data['points_earned'] ?? 0);
             $pointsRedeemed = (int)($data['points_redeemed'] ?? 0);
 
@@ -124,20 +127,30 @@ class OrderModel {
 
             $orderId = $this->db->lastInsertId();
 
-            // 5.2 Lưu chi tiết đơn hàng & Tự động trừ Tồn kho
+            // 5.2 Lưu chi tiết đơn hàng & Tự động trừ Tồn kho (xử lý an toàn khóa ngoại cho Quà Đổi Điểm)
             if (!empty($data['items'])) {
                 $sqlItem = "INSERT INTO order_details (order_id, product_id, quantity, options_json, item_note, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)";
                 $stmtItem = $this->db->prepare($sqlItem);
 
-                $sqlUpdateStock = $this->db->prepare("UPDATE products SET stock_quantity = GREATEST(0, stock_quantity - ?) WHERE id = ?");
+                // Lấy sẵn 1 product_id hợp lệ mặc định trong bảng products để tránh lỗi FOREIGN KEY (order_details_ibfk_2) với quà tặng ảo
+                $fallbackStmt = $this->db->query("SELECT id FROM products ORDER BY id ASC LIMIT 1");
+                $fallbackProductId = $fallbackStmt ? (int)$fallbackStmt->fetchColumn() : 1;
+
+                $stmtFindById      = $this->db->prepare("SELECT id, product_name, manage_stock, stock_quantity FROM products WHERE id = ? FOR UPDATE");
+                $stmtFindByName    = $this->db->prepare("SELECT id FROM products WHERE product_name LIKE ? LIMIT 1");
+                $stmtDeductProduct = $this->db->prepare("UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?");
+                $stmtGetRecipes    = $this->db->prepare("SELECT ingredient_id, quantity_required FROM product_recipes WHERE product_id = ?");
+                $stmtDeductIngredient = $this->db->prepare("UPDATE ingredients SET stock_quantity = GREATEST(0, stock_quantity - ?) WHERE id = ?");
 
                 foreach ($data['items'] as $item) {
-                    $productId   = (int)$item['id'];
-                    $quantity    = (int)$item['qty'];
-                    $unitPrice   = (float)$item['price'];
+                    $rawId       = $item['id'] ?? 0;
+                    $itemName    = trim($item['name'] ?? 'Sản phẩm');
+                    $quantity    = max(1, (int)($item['qty'] ?? 1));
+                    $unitPrice   = (float)($item['price'] ?? 0);
                     $subtotal    = $unitPrice * $quantity;
-                    $itemNote    = $item['note'] ?? '';
-                    
+                    $itemNote    = trim($item['note'] ?? '');
+                    $isGift      = !empty($item['is_gift']) || strpos((string)$rawId, 'GIFT') === 0 || strpos($itemName, '[QUÀ TẶNG]') === 0;
+
                     $optionsArr  = [
                         'size'     => $item['size'] ?? '',
                         'sugar'    => $item['sugar'] ?? '',
@@ -146,15 +159,55 @@ class OrderModel {
                     ];
                     $optionsJson = json_encode($optionsArr, JSON_UNESCAPED_UNICODE);
 
-                    // Insert chi tiết
-                    $stmtItem->execute([$orderId, $productId, $quantity, $optionsJson, $itemNote, $unitPrice, $subtotal]);
+                    $validProductId = 0;
+                    $prodInfo = null;
 
-                    // Trừ kho nguyên liệu/sản phẩm
-                    $sqlUpdateStock->execute([$quantity, $productId]);
+                    if (!$isGift && is_numeric($rawId) && (int)$rawId > 0) {
+                        $stmtFindById->execute([(int)$rawId]);
+                        $prodInfo = $stmtFindById->fetch(PDO::FETCH_ASSOC);
+                        if ($prodInfo) {
+                            $validProductId = (int)$prodInfo['id'];
+                        }
+                    }
+
+                    // Nếu là quà tặng hoặc ID không khớp bảng products -> map sang ID hợp lệ để không dính lỗi khóa ngoại
+                    if ($validProductId <= 0) {
+                        $cleanGiftName = trim(preg_replace('/^\[QUÀ TẶNG\]\s*/iu', '', $itemName));
+                        $stmtFindByName->execute(['%' . $cleanGiftName . '%']);
+                        $matchedId = (int)$stmtFindByName->fetchColumn();
+                        $validProductId = ($matchedId > 0) ? $matchedId : $fallbackProductId;
+
+                        $giftTag = '[QUÀ TẶNG: ' . $cleanGiftName . ']';
+                        if (strpos($itemNote, $giftTag) === false) {
+                            $itemNote = trim($giftTag . ($itemNote ? ' - ' . $itemNote : ''));
+                        }
+                    }
+
+                    if (!$isGift && $prodInfo) {
+                        if ((int)($prodInfo['manage_stock'] ?? 0) === 1) {
+                            // Nhánh 1: Quản lý tồn kho trực tiếp -> Trừ đúng số lượng thực tế
+                            $stmtDeductProduct->execute([$quantity, $validProductId]);
+                        } else {
+                            // Nhánh 2: Món pha chế -> Trừ kho nguyên liệu theo công thức BOM (Size L nhân hệ số 1.3x)
+                            $sizeStr = strtoupper(trim((string)($item['size'] ?? '')));
+                            $sizeMultiplier = ($sizeStr === 'L' || strpos($sizeStr, 'SIZE L') !== false) ? 1.3 : 1.0;
+
+                            $stmtGetRecipes->execute([$validProductId]);
+                            $recipes = $stmtGetRecipes->fetchAll(PDO::FETCH_ASSOC);
+                            foreach ($recipes as $rec) {
+                                $deductQty = round((float)$rec['quantity_required'] * $quantity * $sizeMultiplier, 3);
+                                if ($deductQty > 0) {
+                                    $stmtDeductIngredient->execute([$deductQty, (int)$rec['ingredient_id']]);
+                                }
+                            }
+                        }
+                    }
+
+                    $stmtItem->execute([$orderId, $validProductId, $quantity, $optionsJson, $itemNote, $unitPrice, $subtotal]);
                 }
             }
 
-            // 5.3 Cập nhật điểm tích lũy và tổng chi tiêu tích lũy cho Khách hàng
+            // 5.3 Cập nhật điểm tiêu dùng & tổng chi tiêu tích lũy cho Khách hàng
             if ($customerId) {
                 $netPointChange = $pointsEarned - $pointsRedeemed;
                 $stmtPoints = $this->db->prepare("UPDATE customers SET 
@@ -162,9 +215,9 @@ class OrderModel {
                     maintained_points = GREATEST(0, maintained_points + ?),
                     lifetime_spend = lifetime_spend + ? 
                     WHERE id = ?");
-                $stmtPoints->execute([$netPointChange, max(0, $netPointChange), $finalAmount, $customerId]);
+                $stmtPoints->execute([$netPointChange, max(0, $pointsEarned), $finalAmount, $customerId]);
 
-                // Cập nhật hạng thành viên tự động
+                // Cập nhật hạng thành viên dựa trên tổng chi tiêu tích lũy (không tụt hạng khi khách tiêu điểm)
                 $this->updateCustomerRank($customerId);
             }
 
@@ -177,22 +230,26 @@ class OrderModel {
         }
     }
 
-    // 6. Cập nhật Hạng Thành Viên (Quy chuẩn 5 Hạng)
+    // 6. Cập nhật Hạng Thành Viên (Xét theo tổng chi tiêu lũy kế: 10.000đ = 1 điểm xét hạng)
     private function updateCustomerRank($customerId) {
-        $stmt = $this->db->prepare("SELECT total_points FROM customers WHERE id = ?");
+        $stmt = $this->db->prepare("SELECT total_points, lifetime_spend, member_rank FROM customers WHERE id = ?");
         $stmt->execute([$customerId]);
         $cust = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($cust) {
-            $pts = (int)$cust['total_points'];
+            $rankPts = max((int)$cust['total_points'], (int)floor((float)$cust['lifetime_spend'] / 10000));
             $rank = 'Bronze';
-            if ($pts >= 1000) $rank = 'VIP';
-            else if ($pts >= 600) $rank = 'Diamond';
-            else if ($pts >= 300) $rank = 'Gold';
-            else if ($pts >= 100) $rank = 'Silver';
+            if ($rankPts >= 1000) $rank = 'VIP';
+            else if ($rankPts >= 600) $rank = 'Diamond';
+            else if ($rankPts >= 300) $rank = 'Gold';
+            else if ($rankPts >= 100) $rank = 'Silver';
 
-            $stmtRank = $this->db->prepare("UPDATE customers SET member_rank = ?, rank_updated_at = NOW() WHERE id = ?");
-            $stmtRank->execute([$rank, $customerId]);
+            $rankOrder = ['Bronze' => 1, 'Silver' => 2, 'Gold' => 3, 'Diamond' => 4, 'VIP' => 5];
+            $currentRank = $cust['member_rank'] ?? 'Bronze';
+            if (($rankOrder[$rank] ?? 1) >= ($rankOrder[$currentRank] ?? 1)) {
+                $stmtRank = $this->db->prepare("UPDATE customers SET member_rank = ?, rank_updated_at = NOW() WHERE id = ?");
+                $stmtRank->execute([$rank, $customerId]);
+            }
         }
     }
 
@@ -201,5 +258,4 @@ class OrderModel {
         $stmt = $this->db->prepare("UPDATE tables SET status = ? WHERE id = ?");
         return $stmt->execute([$status, $tableId]);
     }
-
 }

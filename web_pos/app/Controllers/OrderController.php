@@ -11,25 +11,22 @@ class OrderController extends Controller {
     }
 
     /**
-     * Tự động kiểm tra và nâng cấp kiểu dữ liệu cột tiền/điểm/VAT để tránh lỗi tràn số và lưu cấu hình
+     * Tự động kiểm tra và nâng cấp cấu trúc cột an toàn (không làm mất dữ liệu cũ)
      */
     private function ensureDatabaseSchema() {
         try {
             $db = Database::getInstance();
-            // Nâng cấp cột lưu tiền trong bảng orders
             $db->exec("ALTER TABLE orders MODIFY COLUMN total_amount DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE orders MODIFY COLUMN discount DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE orders MODIFY COLUMN final_amount DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE orders MODIFY COLUMN customer_pay DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE orders MODIFY COLUMN change_amount DECIMAL(15,2) DEFAULT 0");
 
-            // Đảm bảo cột vat_percent có trong bảng orders
             $checkVatCol = $db->query("SHOW COLUMNS FROM orders LIKE 'vat_percent'");
             if (!$checkVatCol || $checkVatCol->rowCount() == 0) {
                 $db->exec("ALTER TABLE orders ADD COLUMN vat_percent DECIMAL(5,2) DEFAULT 8.00");
             }
 
-            // Nâng cấp cột doanh thu ca trong bảng shifts
             $db->exec("ALTER TABLE shifts MODIFY COLUMN initial_cash DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE shifts MODIFY COLUMN total_revenue DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE shifts MODIFY COLUMN offline_revenue DECIMAL(15,2) DEFAULT 0");
@@ -39,7 +36,17 @@ class OrderController extends Controller {
             $db->exec("ALTER TABLE shifts MODIFY COLUMN total_app_sales DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE shifts MODIFY COLUMN ending_cash_actual DECIMAL(15,2) DEFAULT 0");
 
-            // Nâng cấp cột điểm tích lũy và theo dõi tụt hạng 30 ngày cho khách hàng
+            // Cột mới cho phiếu kết ca (tiền giữ két & ghi chú chênh lệch)
+            $checkVarNote = $db->query("SHOW COLUMNS FROM shifts LIKE 'variance_note'");
+            if (!$checkVarNote || $checkVarNote->rowCount() == 0) {
+                $db->exec("ALTER TABLE shifts ADD COLUMN variance_note VARCHAR(255) NULL");
+            }
+            $checkRetained = $db->query("SHOW COLUMNS FROM shifts LIKE 'retained_cash'");
+            if (!$checkRetained || $checkRetained->rowCount() == 0) {
+                $db->exec("ALTER TABLE shifts ADD COLUMN retained_cash DECIMAL(15,2) DEFAULT 0");
+            }
+
+            // Nâng cấp bảng customers
             $db->exec("ALTER TABLE customers MODIFY COLUMN total_points INT DEFAULT 0");
             $db->exec("ALTER TABLE customers MODIFY COLUMN lifetime_spend DECIMAL(15,2) DEFAULT 0");
 
@@ -53,7 +60,10 @@ class OrderController extends Controller {
                 $db->exec("ALTER TABLE customers ADD COLUMN maintained_points INT DEFAULT 0");
             }
 
-            // Tạo bảng system_settings nếu chưa có để lưu % VAT động
+            // Đồng bộ dữ liệu cũ: Nếu khách đã có điểm mà lifetime_spend = 0 thì quy đổi mốc chi tiêu tương ứng để không bị tụt hạng khi tiêu điểm
+            $db->exec("UPDATE customers SET lifetime_spend = total_points * 10000 WHERE lifetime_spend = 0 AND total_points > 0");
+
+            // Bảng system_settings
             $db->exec("CREATE TABLE IF NOT EXISTS system_settings (
                 setting_key VARCHAR(50) PRIMARY KEY,
                 setting_value VARCHAR(255) NOT NULL,
@@ -65,13 +75,17 @@ class OrderController extends Controller {
                 $db->exec("INSERT INTO system_settings (setting_key, setting_value) VALUES ('vat_percent', '8.00')");
             }
 
-            // Đảm bảo bảng reservations có cột cancel_reason
+            // Bảng reservations: thêm cột cancel_reason & guest_count
             $checkCancelCol = $db->query("SHOW COLUMNS FROM reservations LIKE 'cancel_reason'");
             if (!$checkCancelCol || $checkCancelCol->rowCount() == 0) {
                 $db->exec("ALTER TABLE reservations ADD COLUMN cancel_reason VARCHAR(255) NULL");
             }
+            $checkGuestCol = $db->query("SHOW COLUMNS FROM reservations LIKE 'guest_count'");
+            if (!$checkGuestCol || $checkGuestCol->rowCount() == 0) {
+                $db->exec("ALTER TABLE reservations ADD COLUMN guest_count INT DEFAULT 2 AFTER customer_phone");
+            }
         } catch (Exception $e) {
-            // Bỏ qua nếu đã được nâng cấp trước đó
+            // Bỏ qua nếu đã nâng cấp
         }
     }
 
@@ -90,7 +104,7 @@ class OrderController extends Controller {
         $this->view('pos/index', $data);
     }
 
-    // TRA CỨU KHÁCH HÀNG (5 HẠNG & KIỂM TRA TỤT HẠNG CUỐN CHIẾU 30 NGÀY)
+    // TRA CỨU KHÁCH HÀNG (XÉT HẠNG DỰA TRÊN TỔNG CHI TIÊU TÍCH LŨY - KHÔNG BỊ TỤT HẠNG KHI ĐỔI ĐIỂM)
     public function searchCustomer() {
         header('Content-Type: application/json');
         try {
@@ -107,49 +121,30 @@ class OrderController extends Controller {
             $customer = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($customer) {
-                $customer['member_rank'] = $customer['member_rank'] ?? 'Bronze';
                 $customer['total_points'] = (int)($customer['total_points'] ?? 0);
                 $customer['lifetime_spend'] = (float)($customer['lifetime_spend'] ?? 0);
                 $customer['maintained_points'] = (int)($customer['maintained_points'] ?? 0);
 
-                // KIỂM TRA VÀ XỬ LÝ TỤT HẠNG 30 NGÀY
-                $rankUpdatedAt = $customer['rank_updated_at'] ? new DateTime($customer['rank_updated_at']) : new DateTime();
-                $now = new DateTime();
-                $interval = $now->diff($rankUpdatedAt);
+                // Tính hạng chuẩn dựa trên tổng chi tiêu tích lũy (10.000đ = 1 điểm xét hạng)
+                $rankPoints = (int)floor($customer['lifetime_spend'] / 10000);
+                $computedRank = 'Bronze';
+                if ($rankPoints >= 1000) $computedRank = 'VIP';
+                else if ($rankPoints >= 600) $computedRank = 'Diamond';
+                else if ($rankPoints >= 300) $computedRank = 'Gold';
+                else if ($rankPoints >= 100) $computedRank = 'Silver';
 
-                if ($interval->days >= 30 && $customer['member_rank'] !== 'Bronze') {
-                    $thresholds = [
-                        'VIP'     => 1000,
-                        'Diamond' => 600,
-                        'Gold'    => 300,
-                        'Silver'  => 100
-                    ];
-
-                    $downgrades = [
-                        'VIP'     => 'Diamond',
-                        'Diamond' => 'Gold',
-                        'Gold'    => 'Silver',
-                        'Silver'  => 'Bronze'
-                    ];
-
-                    $requiredPts = $thresholds[$customer['member_rank']] ?? 0;
-                    $halfRequired = floor($requiredPts * 0.5);
-
-                    // Nếu điểm duy trì 30 ngày không đạt 50% mốc -> Rớt 1 cấp
-                    if ($customer['maintained_points'] < $halfRequired) {
-                        $newRank = $downgrades[$customer['member_rank']] ?? 'Bronze';
-                        $updateRank = $db->prepare("UPDATE customers SET member_rank = ?, rank_updated_at = NOW(), maintained_points = 0 WHERE id = ?");
-                        $updateRank->execute([$newRank, $customer['id']]);
-
-                        $customer['member_rank'] = $newRank;
-                    } else {
-                        // Đạt mốc duy trì -> Reset chu kỳ 30 ngày mới
-                        $resetMaint = $db->prepare("UPDATE customers SET rank_updated_at = NOW(), maintained_points = 0 WHERE id = ?");
-                        $resetMaint->execute([$customer['id']]);
-                    }
+                // Ưu tiên hạng cao hơn giữa hạng hiện tại và hạng theo tổng chi tiêu
+                $rankOrder = ['Bronze' => 1, 'Silver' => 2, 'Gold' => 3, 'Diamond' => 4, 'VIP' => 5];
+                $dbRank = $customer['member_rank'] ?? 'Bronze';
+                if (($rankOrder[$computedRank] ?? 1) > ($rankOrder[$dbRank] ?? 1)) {
+                    $dbRank = $computedRank;
+                    $upd = $db->prepare("UPDATE customers SET member_rank = ? WHERE id = ?");
+                    $upd->execute([$dbRank, $customer['id']]);
                 }
 
-                // CẤU HÌNH % GIẢM GIÁ THEO 5 HẠNG CHUẨN
+                $customer['member_rank'] = $dbRank;
+                $customer['rank_points'] = $rankPoints;
+
                 $rankDiscounts = [
                     'Bronze'  => 0,
                     'Silver'  => 0,
@@ -202,6 +197,7 @@ class OrderController extends Controller {
                         'phone' => $phone,
                         'total_points' => 0,
                         'lifetime_spend' => 0,
+                        'rank_points' => 0,
                         'member_rank' => 'Bronze',
                         'discount_percent' => 0
                     ]
@@ -209,6 +205,73 @@ class OrderController extends Controller {
             } else {
                 echo json_encode(['success' => false, 'message' => 'Không thể tạo thành viên mới. Vui lòng thử lại!']);
             }
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Lỗi hệ thống: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // LẤY DANH SÁCH QUÀ TẶNG TỪ BẢNG REWARDS
+    public function getRewards() {
+        header('Content-Type: application/json');
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query("SELECT * FROM rewards WHERE status = 1 ORDER BY points_required ASC");
+            $rewards = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            echo json_encode(['success' => true, 'rewards' => $rewards]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // ĐỔI QUÀ TẶNG BẰNG ĐIỂM TIÊU DÙNG (KHÔNG ẢNH HƯỞNG TỔNG CHI TIÊU / HẠNG THẺ)
+    public function redeemGift() {
+        header('Content-Type: application/json');
+        try {
+            $rawInput = file_get_contents('php://input');
+            $data = json_decode($rawInput, true);
+
+            $customerId = (int)($data['customer_id'] ?? 0);
+            $rewardId   = (int)($data['reward_id'] ?? 0);
+
+            if ($customerId <= 0 || $rewardId <= 0) {
+                echo json_encode(['success' => false, 'message' => 'Dữ liệu đổi quà không hợp lệ!']);
+                exit;
+            }
+
+            $db = Database::getInstance();
+            $stmtC = $db->prepare("SELECT * FROM customers WHERE id = ?");
+            $stmtC->execute([$customerId]);
+            $customer = $stmtC->fetch(PDO::FETCH_ASSOC);
+
+            $stmtR = $db->prepare("SELECT * FROM rewards WHERE id = ? AND status = 1");
+            $stmtR->execute([$rewardId]);
+            $reward = $stmtR->fetch(PDO::FETCH_ASSOC);
+
+            if (!$customer || !$reward) {
+                echo json_encode(['success' => false, 'message' => 'Không tìm thấy khách hàng hoặc phần quà!']);
+                exit;
+            }
+
+            $currentPts = (int)$customer['total_points'];
+            $reqPts     = (int)$reward['points_required'];
+
+            if ($currentPts < $reqPts) {
+                echo json_encode(['success' => false, 'message' => "Khách chỉ có {$currentPts} điểm, cần {$reqPts} điểm để đổi quà này!"]);
+                exit;
+            }
+
+            $newPts = $currentPts - $reqPts;
+            $upd = $db->prepare("UPDATE customers SET total_points = ? WHERE id = ?");
+            $upd->execute([$newPts, $customerId]);
+
+            echo json_encode([
+                'success' => true,
+                'new_points' => $newPts,
+                'reward' => $reward,
+                'message' => "Đã đổi thành công \"{$reward['reward_name']}\" (-{$reqPts} điểm)!"
+            ]);
         } catch (Exception $e) {
             echo json_encode(['success' => false, 'message' => 'Lỗi hệ thống: ' . $e->getMessage()]);
         }
@@ -229,7 +292,6 @@ class OrderController extends Controller {
         $data['user_id'] = $_SESSION['user']['id'] ?? 1;
         $finalAmount = (float)($data['final_amount'] ?? 0);
 
-        // TÍCH ĐIỂM DỰA TRÊN HẠNG THÀNH VIÊN KHÁCH HÀNG (10.000đ = 1pt x Hệ số)
         $customerId = !empty($data['customer_id']) ? (int)$data['customer_id'] : null;
         $multiplier = 1.0;
 
@@ -266,11 +328,18 @@ class OrderController extends Controller {
                 }
             }
 
-            // KHI THANH TOÁN THÀNH CÔNG -> CẬP NHẬT TRẠNG THÁI
+            // Khi thanh toán thành công: hoàn tất lịch đặt đã Check-in hoặc đang trong khung giờ phục vụ
             if (isset($result['success']) && $result['success']) {
                 $tableId = !empty($data['table_id']) ? (int)$data['table_id'] : 0;
-                if ($tableId > 0) {
-                    $stmtRes = $db->prepare("UPDATE reservations SET status = 'completed' WHERE table_id = ? AND status IN ('confirmed', 'pending')");
+                $reservationId = !empty($data['reservation_id']) ? (int)$data['reservation_id'] : 0;
+                if ($reservationId > 0) {
+                    $stmtRes = $db->prepare("UPDATE reservations SET status = 'completed' WHERE id = ?");
+                    $stmtRes->execute([$reservationId]);
+                } else if ($tableId > 0) {
+                    // Chỉ đóng lịch đặt nếu lịch đó đã tới giờ (trong vòng 60p tới hoặc đã qua)
+                    $stmtRes = $db->prepare("UPDATE reservations SET status = 'completed' 
+                                             WHERE table_id = ? AND status IN ('confirmed', 'pending') 
+                                               AND TIMESTAMPDIFF(MINUTE, NOW(), reservation_time) <= 60");
                     $stmtRes->execute([$tableId]);
                 }
             }
@@ -311,9 +380,7 @@ class OrderController extends Controller {
                 exit;
             }
 
-            // KIỂM TRA BẮT BUỘC ĐÚNG KHUNG GIỜ MỞ CA
             $currentHour = (int)date('H');
-            
             if ($shiftType === 'morning' && ($currentHour < 6 || $currentHour >= 14)) {
                 echo json_encode(['success' => false, 'message' => 'Hiện tại không thuộc khung giờ Ca Sáng (06:00 - 14:00)!']);
                 exit;
@@ -328,11 +395,8 @@ class OrderController extends Controller {
             }
 
             $db = Database::getInstance();
-            
-            // Tự động đóng các ca đang mở cũ
             $db->exec("UPDATE shifts SET status = 'closed', end_time = NOW() WHERE status = 'open'");
 
-            // Thêm bản ghi mở ca mới
             $sql = "INSERT INTO shifts (cashier_id, shift_type, shift_name, initial_cash, start_time, status) VALUES (?, ?, ?, ?, NOW(), 'open')";
             $stmt = $db->prepare($sql);
             
@@ -353,13 +417,11 @@ class OrderController extends Controller {
         exit;
     }
 
-    // LỌC BÁO CÁO DOANH THU CA CHÍNH XÁC VÀ TẢI MỨC VAT HỆ THỐNG
     public function getShiftStatus() {
         header('Content-Type: application/json');
         try {
             $db = Database::getInstance();
 
-            // Lấy % VAT từ CSDL
             $vatPercent = 8.0;
             $stmtVat = $db->query("SELECT setting_value FROM system_settings WHERE setting_key = 'vat_percent' LIMIT 1");
             if ($stmtVat && $rowVat = $stmtVat->fetch(PDO::FETCH_ASSOC)) {
@@ -372,7 +434,6 @@ class OrderController extends Controller {
             if ($shift) {
                 $shiftId = $shift['id'];
                 
-                // Cố định lọc doanh thu và số lượng món theo đúng shift_id của ca đang mở
                 $statStmt = $db->prepare("SELECT 
                     COALESCE(SUM(final_amount), 0) as total_revenue,
                     COALESCE(SUM(CASE WHEN order_type IN ('dine_in','takeaway') THEN final_amount ELSE 0 END), 0) as offline_revenue,
@@ -414,7 +475,6 @@ class OrderController extends Controller {
         exit;
     }
 
-    // API CẬP NHẬT % VAT HỆ THỐNG DÀNH CHO ADMIN
     public function updateVatSetting() {
         header('Content-Type: application/json');
         
@@ -458,6 +518,8 @@ class OrderController extends Controller {
         $totalBankSales   = (float)($data['total_bank_sales'] ?? 0);
         $totalAppSales    = (float)($data['total_app_sales'] ?? 0);
         $endingCashActual = (float)($data['ending_cash_actual'] ?? 0);
+        $retainedCash     = (float)($data['retained_cash'] ?? 0);
+        $varianceNote     = trim($data['variance_note'] ?? '');
         $totalOrders      = (int)($data['total_orders'] ?? 0);
         $totalCups        = (int)($data['total_cups'] ?? 0);
         $totalCakes       = (int)($data['total_cakes'] ?? 0);
@@ -474,6 +536,8 @@ class OrderController extends Controller {
                         total_bank_sales = ?,
                         total_app_sales = ?,
                         ending_cash_actual = ?,
+                        retained_cash = ?,
+                        variance_note = ?,
                         total_orders = ?, 
                         total_cups = ?, 
                         total_cakes = ?, 
@@ -482,7 +546,7 @@ class OrderController extends Controller {
             $stmt = $db->prepare($sql);
             $result = $stmt->execute([
                 $totalRevenue, $offlineRevenue, $onlineRevenue, $totalCashSales, $totalBankSales, $totalAppSales, $endingCashActual, 
-                $totalOrders, $totalCups, $totalCakes, $shiftId
+                $retainedCash, $varianceNote, $totalOrders, $totalCups, $totalCakes, $shiftId
             ]);
         } else {
             $sql = "UPDATE shifts SET 
@@ -494,6 +558,8 @@ class OrderController extends Controller {
                         total_bank_sales = ?,
                         total_app_sales = ?,
                         ending_cash_actual = ?,
+                        retained_cash = ?,
+                        variance_note = ?,
                         total_orders = ?, 
                         total_cups = ?, 
                         total_cakes = ?, 
@@ -501,7 +567,8 @@ class OrderController extends Controller {
                     WHERE status = 'open' ORDER BY id DESC LIMIT 1";
             $stmt = $db->prepare($sql);
             $result = $stmt->execute([
-                $totalRevenue, $offlineRevenue, $onlineRevenue, $totalCashSales, $totalBankSales, $totalAppSales, $endingCashActual, $totalOrders, $totalCups, $totalCakes
+                $totalRevenue, $offlineRevenue, $onlineRevenue, $totalCashSales, $totalBankSales, $totalAppSales, $endingCashActual, 
+                $retainedCash, $varianceNote, $totalOrders, $totalCups, $totalCakes
             ]);
         }
 
@@ -567,32 +634,58 @@ class OrderController extends Controller {
         exit;
     }
 
+    // ==================== HỆ THỐNG ĐẶT BÀN NÂNG CẤP (ĐA LỊCH, KHUNG GIỜ 2H - 24H, CHECK-IN) ====================
+
     public function reserveTable() {
+        date_default_timezone_set('Asia/Ho_Chi_Minh');
         header('Content-Type: application/json');
         $rawInput = file_get_contents('php://input');
         $data = json_decode($rawInput, true);
 
-        $tableId = (int)($data['table_id'] ?? 0);
-        $name    = trim($data['customer_name'] ?? '');
-        $phone   = trim($data['customer_phone'] ?? '');
-        $date    = trim($data['reserve_date'] ?? '');
-        $time    = trim($data['reserve_time'] ?? '');
-        $note    = trim($data['reserve_note'] ?? '');
+        $tableId    = (int)($data['table_id'] ?? 0);
+        $name       = trim($data['customer_name'] ?? '');
+        $phone      = trim($data['customer_phone'] ?? '');
+        $guestCount = max(1, (int)($data['guest_count'] ?? 2));
+        $date       = trim($data['reserve_date'] ?? '');
+        $time       = trim($data['reserve_time'] ?? '');
+        $note       = trim($data['reserve_note'] ?? '');
         $customerId = !empty($data['customer_id']) ? (int)$data['customer_id'] : null;
 
         if ($tableId <= 0 || empty($name) || empty($phone) || empty($date) || empty($time)) {
-            echo json_encode(['success' => false, 'message' => 'Thông tin đặt bàn không đầy đủ!']);
+            echo json_encode(['success' => false, 'message' => 'Vui lòng nhập đầy đủ Tên, SĐT, Ngày và Giờ hẹn!']);
             exit;
         }
 
         $reservationTimeStr = "$date $time:00";
+        $targetTs = strtotime($reservationTimeStr);
+        $nowTs    = time();
+
+        if (!$targetTs) {
+            echo json_encode(['success' => false, 'message' => 'Định dạng ngày giờ đặt bàn không hợp lệ!']);
+            exit;
+        }
+
+        // Quy định thời gian: Tối thiểu trước 2 tiếng (120p), tối đa 24 tiếng (1440p)
+        $diffMinutes = ($targetTs - $nowTs) / 60;
+        if ($diffMinutes < 115) {
+            echo json_encode(['success' => false, 'message' => 'Thời gian đặt bàn phải trước giờ hẹn tối thiểu 2 tiếng!']);
+            exit;
+        }
+        if ($diffMinutes > 1445) {
+            echo json_encode(['success' => false, 'message' => 'Chỉ nhận đặt bàn trước tối đa 1 ngày (24 tiếng)!']);
+            exit;
+        }
+
         $db = Database::getInstance();
 
-        // 1. Kiểm tra trùng SĐT đang chờ đặt
+        // 1. Kiểm tra SĐT này đã có lịch đặt đang chờ trong khung giờ gần nhau chưa (cách < 2 tiếng)
         $stmtPhoneCheck = $db->prepare("SELECT r.reservation_time, t.table_name FROM reservations r 
                                         LEFT JOIN tables t ON r.table_id = t.id 
-                                        WHERE r.customer_phone = ? AND r.status IN ('confirmed', 'pending') LIMIT 1");
-        $stmtPhoneCheck->execute([$phone]);
+                                        WHERE r.customer_phone = ? 
+                                          AND r.status IN ('confirmed', 'pending')
+                                          AND ABS(TIMESTAMPDIFF(MINUTE, r.reservation_time, ?)) < 120
+                                        LIMIT 1");
+        $stmtPhoneCheck->execute([$phone, $reservationTimeStr]);
         $existingPhoneRes = $stmtPhoneCheck->fetch(PDO::FETCH_ASSOC);
 
         if ($existingPhoneRes) {
@@ -600,38 +693,44 @@ class OrderController extends Controller {
             $existingTime = date('H:i d/m', strtotime($existingPhoneRes['reservation_time']));
             echo json_encode([
                 'success' => false, 
-                'message' => "Số điện thoại {$phone} đã có lịch đặt đang chờ tại {$existingTable} lúc {$existingTime}!"
+                'message' => "SĐT {$phone} đã có lịch đặt tại {$existingTable} lúc {$existingTime} (cách dưới 2 tiếng)!"
             ]);
             exit;
         }
 
-        // 2. Kiểm tra xung đột khung giờ trên cùng 1 bàn
-        $checkSql = "SELECT reservation_time FROM reservations 
+        // 2. Kiểm tra xung đột khung giờ trên cùng 1 bàn (cho phép đặt nhiều lịch trên cùng 1 bàn nếu cách nhau >= 2 tiếng)
+        $checkSql = "SELECT reservation_time, customer_name FROM reservations 
                      WHERE table_id = ? 
                        AND status IN ('confirmed', 'pending') 
-                       AND ABS(TIMESTAMPDIFF(SECOND, reservation_time, ?)) < 7200";
+                       AND ABS(TIMESTAMPDIFF(MINUTE, reservation_time, ?)) < 120";
         $stmtCheck = $db->prepare($checkSql);
         $stmtCheck->execute([$tableId, $reservationTimeStr]);
         $conflict = $stmtCheck->fetch(PDO::FETCH_ASSOC);
 
         if ($conflict) {
-            $existingTime = date('H:i', strtotime($conflict['reservation_time']));
+            $existingTime = date('H:i d/m', strtotime($conflict['reservation_time']));
             echo json_encode([
                 'success' => false, 
-                'message' => "Bàn này đã có lịch đặt lúc {$existingTime}. Vui lòng chọn khung giờ cách ít nhất 2 tiếng!"
+                'message' => "Bàn này đã có lịch của khách {$conflict['customer_name']} lúc {$existingTime}. Vui lòng chọn giờ cách ít nhất 2 tiếng!"
             ]);
             exit;
         }
 
-        $sql = "INSERT INTO reservations (table_id, customer_id, customer_name, customer_phone, reservation_time, note, status) VALUES (?, ?, ?, ?, ?, ?, 'confirmed')";
+        // Tự động liên kết customer_id nếu SĐT đã là thành viên
+        if (!$customerId) {
+            $stmtCust = $db->prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1");
+            $stmtCust->execute([$phone]);
+            $custRow = $stmtCust->fetch(PDO::FETCH_ASSOC);
+            if ($custRow) $customerId = (int)$custRow['id'];
+        }
+
+        $sql = "INSERT INTO reservations (table_id, customer_id, customer_name, customer_phone, guest_count, reservation_time, note, status) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed')";
         $stmt = $db->prepare($sql);
-        $executed = $stmt->execute([$tableId, $customerId, $name, $phone, $reservationTimeStr, $note]);
+        $executed = $stmt->execute([$tableId, $customerId, $name, $phone, $guestCount, $reservationTimeStr, $note]);
 
         if ($executed) {
             $resId = $db->lastInsertId();
-            $stmtTable = $db->prepare("UPDATE tables SET status = 2 WHERE id = ?");
-            $stmtTable->execute([$tableId]);
-
             echo json_encode([
                 'success' => true,
                 'reservation_id' => $resId,
@@ -643,27 +742,91 @@ class OrderController extends Controller {
         exit;
     }
 
-    public function cancelReservation() {
+    // KHÁCH ĐÃ ĐẾN (CHECK-IN NHANH TỪ DANH SÁCH ĐẶT BÀN)
+    public function checkInReservation() {
         header('Content-Type: application/json');
         $rawInput = file_get_contents('php://input');
         $data = json_decode($rawInput, true);
 
-        $tableId = (int)($data['table_id'] ?? 0);
-        $reason  = trim($data['reason'] ?? 'Khách báo hủy');
-
-        if ($tableId <= 0) {
-            echo json_encode(['success' => false, 'message' => 'Mã bàn không hợp lệ!']);
+        $reservationId = (int)($data['reservation_id'] ?? 0);
+        if ($reservationId <= 0) {
+            echo json_encode(['success' => false, 'message' => 'Mã lịch đặt không hợp lệ!']);
             exit;
         }
 
         try {
             $db = Database::getInstance();
-            $sql = "UPDATE reservations SET status = 'cancelled', cancel_reason = ? WHERE table_id = ? AND status IN ('confirmed', 'pending')";
-            $stmt = $db->prepare($sql);
-            $result = $stmt->execute([$reason, $tableId]);
+            $stmt = $db->prepare("SELECT r.*, t.table_name FROM reservations r LEFT JOIN tables t ON r.table_id = t.id WHERE r.id = ?");
+            $stmt->execute([$reservationId]);
+            $res = $stmt->fetch(PDO::FETCH_ASSOC);
 
-            $stmtTable = $db->prepare("UPDATE tables SET status = 0 WHERE id = ?");
-            $stmtTable->execute([$tableId]);
+            if (!$res) {
+                echo json_encode(['success' => false, 'message' => 'Không tìm thấy lịch đặt bàn này!']);
+                exit;
+            }
+
+            // Đánh dấu lịch đặt đã hoàn tất nhận bàn & chuyển trạng thái bàn thành Có khách (1)
+            $updRes = $db->prepare("UPDATE reservations SET status = 'completed' WHERE id = ?");
+            $updRes->execute([$reservationId]);
+
+            $updTbl = $db->prepare("UPDATE tables SET status = 1 WHERE id = ?");
+            $updTbl->execute([(int)$res['table_id']]);
+
+            echo json_encode([
+                'success' => true,
+                'reservation' => $res,
+                'message' => "Đã Check-in cho khách {$res['customer_name']} vào {$res['table_name']}!"
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => 'Lỗi hệ thống: ' . $e->getMessage()]);
+        }
+        exit;
+    }
+
+    public function cancelReservation() {
+        header('Content-Type: application/json');
+        $rawInput = file_get_contents('php://input');
+        $data = json_decode($rawInput, true);
+
+        $reservationId = (int)($data['reservation_id'] ?? 0);
+        $tableId       = (int)($data['table_id'] ?? 0);
+        $reason        = trim($data['reason'] ?? 'Khách báo hủy');
+
+        if ($reservationId <= 0 && $tableId <= 0) {
+            echo json_encode(['success' => false, 'message' => 'Thông tin lịch đặt không hợp lệ!']);
+            exit;
+        }
+
+        try {
+            $db = Database::getInstance();
+            if ($reservationId > 0) {
+                $stmtGet = $db->prepare("SELECT table_id FROM reservations WHERE id = ?");
+                $stmtGet->execute([$reservationId]);
+                $row = $stmtGet->fetch(PDO::FETCH_ASSOC);
+                if ($row) $tableId = (int)$row['table_id'];
+
+                $sql = "UPDATE reservations SET status = 'cancelled', cancel_reason = ? WHERE id = ?";
+                $stmt = $db->prepare($sql);
+                $result = $stmt->execute([$reason, $reservationId]);
+            } else {
+                $sql = "UPDATE reservations SET status = 'cancelled', cancel_reason = ? WHERE table_id = ? AND status IN ('confirmed', 'pending')";
+                $stmt = $db->prepare($sql);
+                $result = $stmt->execute([$reason, $tableId]);
+            }
+
+            // Nếu bàn đang ở trạng thái 2 (Đã đặt) và không còn lịch nào sắp tới trong 60p thì trả về Trống (0)
+            if ($tableId > 0) {
+                $stmtCheckNext = $db->prepare("SELECT COUNT(*) FROM reservations 
+                                               WHERE table_id = ? AND status IN ('confirmed', 'pending') 
+                                                 AND TIMESTAMPDIFF(MINUTE, NOW(), reservation_time) BETWEEN -30 AND 60");
+                $stmtCheckNext->execute([$tableId]);
+                $hasUpcoming = (int)$stmtCheckNext->fetchColumn() > 0;
+
+                if (!$hasUpcoming) {
+                    $stmtTable = $db->prepare("UPDATE tables SET status = 0 WHERE id = ? AND status = 2");
+                    $stmtTable->execute([$tableId]);
+                }
+            }
 
             if ($result) {
                 echo json_encode(['success' => true, 'message' => 'Đã hủy lịch đặt bàn thành công!']);
@@ -681,21 +844,15 @@ class OrderController extends Controller {
         $rawInput = file_get_contents('php://input');
         $data = json_decode($rawInput, true);
 
-        $tableId    = (int)($data['table_id'] ?? 0);
-        $status     = trim($data['status'] ?? 'available');
-        $keepStatus = isset($data['keep_status']) ? (bool)$data['keep_status'] : false;
+        $tableId = (int)($data['table_id'] ?? 0);
+        $status  = trim($data['status'] ?? 'available');
 
         if ($tableId <= 0) {
             echo json_encode(['success' => false, 'message' => 'ID bàn không hợp lệ!']);
             exit;
         }
 
-        $statusVal = 0;
-        if ($keepStatus) {
-            $statusVal = ($status === 'occupied') ? 1 : (($status === 'reserved') ? 2 : 0);
-        } else {
-            $statusVal = ($status === 'occupied') ? 1 : (($status === 'reserved') ? 2 : 0);
-        }
+        $statusVal = ($status === 'occupied') ? 1 : (($status === 'reserved') ? 2 : 0);
 
         $db = Database::getInstance();
         $stmt = $db->prepare("UPDATE tables SET status = ? WHERE id = ?");
@@ -707,30 +864,155 @@ class OrderController extends Controller {
         exit;
     }
 
+    // LẤY DANH SÁCH ĐẶT BÀN ĐA LỊCH & TRẠNG THÁI BÀN THÔNG MINH (CHỈ ĐỔI MÀU VÀNG TRƯỚC 60 PHÚT)
     public function getReservations() {
+        date_default_timezone_set('Asia/Ho_Chi_Minh');
         header('Content-Type: application/json');
         try {
             $db = Database::getInstance();
-            $stmt = $db->query("SELECT t.id as table_id, t.table_name, t.status as table_status, 
-                                       r.id as reservation_id, r.customer_name, r.customer_phone, 
-                                       DATE_FORMAT(r.reservation_time, '%Y-%m-%d %H:%i:%s') as reservation_time, r.note
-                                FROM tables t
-                                LEFT JOIN reservations r ON t.id = r.table_id AND r.status IN ('confirmed', 'pending')
-                                WHERE LOWER(t.table_name) NOT LIKE '%mang về%' 
-                                  AND LOWER(t.table_name) NOT LIKE '%mv-%' 
-                                  AND LOWER(t.table_name) NOT LIKE '%grab%' 
-                                  AND LOWER(t.table_name) NOT LIKE '%shopee%' 
-                                  AND LOWER(t.table_name) NOT LIKE '%app%'
-                                ORDER BY t.id ASC");
-            $tables = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-            echo json_encode(['success' => true, 'tables' => $tables, 'reservations' => $tables]);
+            // 1. Lấy danh sách toàn bộ bàn dine_in
+            $stmtTables = $db->query("SELECT t.id as table_id, t.table_name, t.status as table_status, a.area_name
+                                      FROM tables t
+                                      LEFT JOIN areas a ON t.area_id = a.id
+                                      WHERE t.table_type = 'dine_in'
+                                      ORDER BY t.id ASC");
+            $tables = $stmtTables->fetchAll(PDO::FETCH_ASSOC);
+
+            // 2. Lấy toàn bộ lịch đặt đang chờ (confirmed/pending), sắp xếp theo giờ hẹn tăng dần
+            $stmtRes = $db->query("SELECT r.id as reservation_id, r.table_id, t.table_name, a.area_name,
+                                          r.customer_id, r.customer_name, r.customer_phone, r.guest_count,
+                                          DATE_FORMAT(r.reservation_time, '%Y-%m-%d %H:%i:%s') as reservation_time, 
+                                          r.note, r.status,
+                                          TIMESTAMPDIFF(MINUTE, NOW(), r.reservation_time) as mins_until
+                                   FROM reservations r
+                                   INNER JOIN tables t ON r.table_id = t.id
+                                   LEFT JOIN areas a ON t.area_id = a.id
+                                   WHERE r.status IN ('confirmed', 'pending')
+                                   ORDER BY r.reservation_time ASC");
+            $allReservations = $stmtRes->fetchAll(PDO::FETCH_ASSOC);
+
+            // Gom lịch theo table_id & đồng bộ màu bàn thông minh
+            $resByTable = [];
+            foreach ($allReservations as $r) {
+                $tid = (int)$r['table_id'];
+                if (!isset($resByTable[$tid])) $resByTable[$tid] = [];
+                $resByTable[$tid][] = $r;
+            }
+
+            foreach ($tables as &$tbl) {
+                $tid = (int)$tbl['table_id'];
+                $tbl['upcoming_reservations'] = $resByTable[$tid] ?? [];
+                $nextRes = $tbl['upcoming_reservations'][0] ?? null;
+
+                // Nếu bàn đang Trống (0) mà có lịch hẹn trong vòng 60 phút tới -> tự động chuyển sang 2 (Đã đặt)
+                // Ngược lại nếu bàn đang 2 (Đã đặt) nhưng lịch hẹn còn > 60 phút nữa -> trả về 0 (Trống) để khách vãng lai vẫn ngồi xoay tua được!
+                if ((int)$tbl['table_status'] !== 1) {
+                    if ($nextRes && (int)$nextRes['mins_until'] <= 60 && (int)$nextRes['mins_until'] >= -30) {
+                        if ((int)$tbl['table_status'] !== 2) {
+                            $db->prepare("UPDATE tables SET status = 2 WHERE id = ?")->execute([$tid]);
+                            $tbl['table_status'] = 2;
+                        }
+                    } else {
+                        if ((int)$tbl['table_status'] === 2) {
+                            $db->prepare("UPDATE tables SET status = 0 WHERE id = ?")->execute([$tid]);
+                            $tbl['table_status'] = 0;
+                        }
+                    }
+                }
+            }
+
+            echo json_encode([
+                'success' => true,
+                'tables' => $tables,
+                'reservations' => $allReservations
+            ]);
         } catch (Exception $e) {
             echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         }
         exit;
     }
+    // TẠO LỊCH ĐẶT BÀN MỚI (CÓ CHECK TRÙNG SĐT & ĐỒNG BỘ KHÁCH HÀNG)
+    public function createReservation() {
+        date_default_timezone_set('Asia/Ho_Chi_Minh');
+        header('Content-Type: application/json');
+        try {
+            $input = json_decode(file_get_contents('php://input'), true);
+            $tableId = (int)($input['table_id'] ?? 0);
+            $customerName = trim($input['customer_name'] ?? '');
+            $customerPhone = trim($input['customer_phone'] ?? '');
+            $guestCount = max(1, (int)($input['guest_count'] ?? 1));
+            $reservationTime = trim($input['reservation_time'] ?? '');
+            $note = trim($input['note'] ?? '');
 
+            if ($tableId <= 0 || $customerName === '' || $customerPhone === '' || $reservationTime === '') {
+                echo json_encode(['success' => false, 'message' => 'Vui lòng nhập đầy đủ thông tin đặt bàn!']);
+                exit;
+            }
+
+            $db = Database::getInstance();
+
+            // 1. Kiểm tra trùng SĐT đang có lịch đặt bàn hiệu lực (confirmed/pending)
+            $stmtDupPhone = $db->prepare("SELECT r.id, r.reservation_time, t.table_name 
+                                          FROM reservations r
+                                          LEFT JOIN tables t ON r.table_id = t.id
+                                          WHERE r.customer_phone = ? 
+                                            AND r.status IN ('confirmed', 'pending')
+                                            AND r.reservation_time >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)
+                                          LIMIT 1");
+            $stmtDupPhone->execute([$customerPhone]);
+            $existingPhoneRes = $stmtDupPhone->fetch(PDO::FETCH_ASSOC);
+
+            if ($existingPhoneRes) {
+                $tName = $existingPhoneRes['table_name'] ?: ('Bàn ' . $tableId);
+                $tTime = date('H:i d/m', strtotime($existingPhoneRes['reservation_time']));
+                echo json_encode([
+                    'success' => false,
+                    'message' => "SĐT {$customerPhone} đã có lịch đặt tại {$tName} lúc {$tTime}. Không thể đặt trùng nhiều bàn cùng lúc!"
+                ]);
+                exit;
+            }
+
+            // 2. Kiểm tra trùng khung giờ trên cùng 1 bàn (cách nhau tối thiểu 90 phút)
+            $stmtConflict = $db->prepare("SELECT customer_name, reservation_time 
+                                          FROM reservations 
+                                          WHERE table_id = ? 
+                                            AND status IN ('confirmed', 'pending')
+                                            AND ABS(TIMESTAMPDIFF(MINUTE, reservation_time, ?)) < 90
+                                          LIMIT 1");
+            $stmtConflict->execute([$tableId, $reservationTime]);
+            $conflict = $stmtConflict->fetch(PDO::FETCH_ASSOC);
+
+            if ($conflict) {
+                $cTime = date('H:i d/m', strtotime($conflict['reservation_time']));
+                echo json_encode([
+                    'success' => false,
+                    'message' => "Bàn này đã có khách [{$conflict['customer_name']}] đặt lúc {$cTime}. Vui lòng chọn giờ cách tối thiểu 90 phút!"
+                ]);
+                exit;
+            }
+
+            // 3. Tự động liên kết customer_id nếu SĐT đã là thành viên
+            $stmtCus = $db->prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1");
+            $stmtCus->execute([$customerPhone]);
+            $customerId = $stmtCus->fetchColumn() ?: null;
+
+            // 4. Lưu lịch đặt bàn vào DB
+            $stmt = $db->prepare("INSERT INTO reservations (table_id, customer_id, customer_name, customer_phone, guest_count, reservation_time, note, status) 
+                                  VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed')");
+            $stmt->execute([$tableId, $customerId, $customerName, $customerPhone, $guestCount, $reservationTime, $note]);
+            $newResId = $db->lastInsertId();
+
+            echo json_encode([
+                'success' => true,
+                'reservation_id' => $newResId,
+                'message' => 'Đã tạo lịch đặt bàn thành công!'
+            ]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        }
+        exit;
+    }
     public function checkShiftTimeout() {
         date_default_timezone_set('Asia/Ho_Chi_Minh');
         header('Content-Type: application/json');
