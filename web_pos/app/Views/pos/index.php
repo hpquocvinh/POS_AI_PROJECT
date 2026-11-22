@@ -444,33 +444,36 @@ $baseUrl  = defined('BASE_URL') ? BASE_URL : '';
         <div class="row g-3">
             <!-- CỘT TRÁI: THẺ THÀNH VIÊN & QUY ĐỔI ĐIỂM LÀM TRÒN BILL -->
             <div class="col-md-5">
-                <div class="rounded-4 p-3 text-white shadow-sm mb-3" id="crm-modal-card-banner" style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%);">
+                <div class="member-virtual-card card-Bronze mb-3" id="crm-modal-card-banner">
                     <div class="d-flex justify-content-between align-items-start mb-2">
                         <div>
-                            <small class="opacity-75 d-block" style="font-size: 11px;">Hội viên POS</small>
-                            <h5 class="fw-bold mb-0" id="crm-modal-cust-name">--</h5>
+                            <small class="text-uppercase fw-semibold d-block opacity-75" style="font-size: 10px; letter-spacing: 1px;">SMART F&amp;B MEMBERSHIP</small>
+                            <h5 class="fw-bold mb-0 mt-1" id="crm-modal-cust-name">--</h5>
                             <small class="opacity-75" id="crm-modal-cust-phone">--</small>
                         </div>
-                        <span class="badge bg-warning text-dark fw-bold px-2 py-1" id="crm-modal-rank-pill">BRONZE</span>
+                        <span class="badge bg-warning text-dark fw-bold px-2 py-1 rounded-pill shadow-sm" id="crm-modal-rank-pill" style="font-size: 10.5px;">BRONZE</span>
                     </div>
-                    <hr class="border-light opacity-25 my-2">
-                    <div class="d-flex justify-content-between align-items-end">
+                    <div class="d-flex justify-content-between align-items-end mt-3 mb-2">
                         <div>
-                            <small class="opacity-75 d-block" style="font-size: 10.5px;">Điểm tiêu dùng</small>
-                            <span class="fs-4 fw-extrabold text-warning" id="crm-modal-avail-pts">0 pt</span>
+                            <small class="d-block opacity-75" style="font-size: 10.5px;">Điểm tiêu dùng hiện có</small>
+                            <h3 class="fw-bold text-warning mb-0 card-points-highlight" id="crm-modal-avail-pts">0 pt</h3>
                         </div>
                         <div class="text-end">
-                            <small class="opacity-75 d-block" style="font-size: 10.5px;">Chi tiêu xét hạng</small>
-                            <span class="fw-bold" id="crm-modal-spent-val">0 đ</span>
+                            <small class="d-block opacity-75" style="font-size: 10.5px;">Tổng chi tiêu</small>
+                            <span class="fw-bold text-white" id="crm-modal-spent-val">0 đ</span>
                         </div>
                     </div>
+                    <div class="progress-tier-bar mb-1">
+                        <div class="progress-tier-fill" id="crm-modal-progress-bar" style="width: 0%;"></div>
+                    </div>
+                    <small class="d-block opacity-75" id="crm-modal-progress-text" style="font-size: 10.5px;">Chi tiêu thêm để lên hạng tiếp theo</small>
                 </div>
 
                 <!-- TRỪ ĐIỂM & TỰ ĐỘNG LÀM TRÒN TIỀN -->
                 <div class="bg-white p-3 rounded-4 border shadow-sm">
                     <div class="d-flex justify-content-between align-items-center mb-2">
                         <span class="fw-bold text-dark" style="font-size: 12.5px;"><i class="bi bi-coin text-warning me-1"></i> Trừ điểm vào hóa đơn</span>
-                        <span class="badge bg-light text-secondary border" style="font-size: 10px;">1 pt = 100đ</span>
+                        <span class="badge bg-light text-secondary border" id="crm-modal-redeem-rate-badge" style="font-size: 10px;">1 pt = 1.000đ</span>
                     </div>
                     <div class="d-flex justify-content-between align-items-center bg-light px-2 py-1 rounded-3 border mb-2" style="font-size: 11.5px;">
                         <span class="text-muted">Tổng bill trước trừ điểm:</span>
@@ -482,8 +485,8 @@ $baseUrl  = defined('BASE_URL') ? BASE_URL : '';
                             <i class="bi bi-magic"></i> Tự động làm tròn
                         </button>
                     </div>
-                    <div id="crm-auto-round-hint" class="text-muted mb-2" style="font-size: 10.5px;">
-                        VD: Bill <b>105.500đ</b> bấm <b>Tự động làm tròn</b> sẽ tự dùng <b>5 pt</b> (-500đ) còn <b>105.000đ</b>.
+                    <div id="crm-auto-round-hint" class="text-muted mb-2" style="font-size: 11px;">
+                        Tự động quy đổi điểm để làm tròn tiền trên hóa đơn.
                     </div>
                     <div class="d-flex gap-2">
                         <button type="button" class="btn btn-dark btn-sm fw-bold flex-grow-1 py-2 saas-btn-nowrap" onclick="applyManualPointsRedeem()">
@@ -499,11 +502,11 @@ $baseUrl  = defined('BASE_URL') ? BASE_URL : '';
             <!-- CỘT PHẢI: DANH SÁCH QUÀ ĐỔI ĐIỂM PHÂN CẤP THEO TỪNG HẠNG THẺ -->
             <div class="col-md-7">
                 <div class="bg-white p-3 rounded-4 border shadow-sm h-100 d-flex flex-column">
-                    <div class="d-flex justify-content-between align-items-center mb-2">
-                        <h6 class="fw-bold text-dark m-0" style="font-size: 13.5px;">
-                            <i class="bi bi-gift-fill text-danger me-1"></i> Quà Đổi Điểm Theo Hạng Thành Viên
-                        </h6>
-                        <span class="badge bg-primary-subtle text-primary" style="font-size: 10.5px;">Hạng cao mở khóa quà VIP</span>
+                    <div class="d-flex justify-content-between align-items-center mb-2 pb-2 border-bottom gap-2">
+                        <span class="fw-bold text-dark text-nowrap" style="font-size: 13px;">
+                            <i class="bi bi-gift-fill text-danger me-1"></i> Quà Đổi Điểm Theo Hạng
+                        </span>
+                        <span class="badge bg-primary-subtle text-primary rounded-pill text-nowrap" style="font-size: 10.5px;">Mở khóa theo hạng</span>
                     </div>
                     <div class="d-flex flex-column gap-2 overflow-auto pe-1" id="crm-tier-rewards-container" style="max-height: 330px;">
                         <!-- Render tự động theo hạng của khách hàng -->
@@ -573,33 +576,51 @@ $baseUrl  = defined('BASE_URL') ? BASE_URL : '';
   </div>
 </div>
 
-<!-- MODAL ĐĂNG KÝ KHÁCH HÀNG THÀNH VIÊN MỚI -->
+<!-- MODAL ĐĂNG KÝ KHÁCH HÀNG THÀNH VIÊN -->
 <div class="modal fade" id="registerCustomerModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" style="max-width: 400px;">
-    <div class="modal-content saas-modal-content">
-      <div class="saas-modal-header d-flex justify-content-between align-items-center">
-        <h6 class="fw-bold text-dark m-0 d-inline-flex align-items-center gap-2">
-            <i class="bi bi-person-plus-fill text-primary"></i> ĐĂNG KÝ THÀNH VIÊN MỚI
-        </h6>
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 rounded-4 shadow-lg">
+      <div class="modal-header border-0 pb-0 pt-4 px-4">
+        <h5 class="modal-title fw-bold text-dark">Thêm Hội Viên Mới</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body p-4">
-        <div class="mb-3">
-            <label class="fw-bold text-secondary mb-1" style="font-size: 11px;">SỐ ĐIỆN THOẠI (*)</label>
-            <input type="text" id="reg-cust-phone" class="form-control rounded-3" placeholder="Nhập số điện thoại (10 số)..." maxlength="10">
-        </div>
-        <div class="mb-1">
-            <label class="fw-bold text-secondary mb-1" style="font-size: 11px;">HỌ VÀ TÊN (*)</label>
-            <input type="text" id="reg-cust-name" class="form-control rounded-3" placeholder="Nhập họ và tên khách hàng...">
+        <div class="row g-3">
+            <div class="col-12">
+                <label class="form-label fw-semibold small">Họ và Tên Hội Viên <span class="text-danger">*</span></label>
+                <input type="text" class="form-control rounded-3" id="reg-cust-name" placeholder="VD: Nguyễn Văn A">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold small">Số Điện Thoại <span class="text-danger">*</span></label>
+                <input type="text" class="form-control rounded-3" id="reg-cust-phone" placeholder="0901234567" maxlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold small">Hạng Thẻ</label>
+                <select class="form-select rounded-3" id="reg-cust-rank" disabled title="Hội viên mới mặc định hạng Bronze">
+                    <option value="Bronze" selected>Bronze</option>
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold small">Ngày Sinh</label>
+                <input type="date" class="form-control rounded-3" id="reg-cust-dob">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold small">Email</label>
+                <input type="email" class="form-control rounded-3" id="reg-cust-email" placeholder="khachhang@gmail.com">
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold small">Địa Chỉ</label>
+                <input type="text" class="form-control rounded-3" id="reg-cust-address" placeholder="Quận 1, TP.HCM">
+            </div>
         </div>
       </div>
-      <div class="modal-footer border-top-0 pt-0 px-4 pb-4">
-        <button type="button" class="btn btn-dark w-100 fw-bold py-2 rounded-3" onclick="confirmRegisterCustomer()">LƯU & CHỌN KHÁCH HÀNG</button>
+      <div class="modal-footer border-0 px-4 pb-4 pt-0">
+        <button type="button" class="btn btn-light fw-semibold rounded-3 px-4" data-bs-dismiss="modal">Hủy</button>
+        <button type="button" class="btn btn-dark fw-bold rounded-3 px-4" onclick="confirmRegisterCustomer()">Lưu Hồ Sơ</button>
       </div>
     </div>
   </div>
 </div>
-
 <!-- MODAL CẤU HÌNH THUẾ VAT ĐỘNG (DÀNH CHO ADMIN) -->
 <div class="modal fade" id="vatSettingModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered" style="max-width: 380px;">

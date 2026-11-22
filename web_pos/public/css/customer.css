@@ -1,0 +1,264 @@
+/* public/css/customer.css - Luxury SaaS CRM & Metallic Member Cards */
+
+.crm-page-wrap {
+    max-width: 1440px;
+    margin: 0 auto;
+}
+
+.crm-kpi-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(15, 23, 42, 0.03);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    height: 100%;
+}
+.crm-kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+.crm-kpi-icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+/* Main Navigation Tabs dàn ngang đều 100% bằng khối dưới */
+.crm-main-tabs {
+    display: flex !important;
+    width: 100% !important;
+    gap: 8px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    padding: 6px;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.03);
+}
+.crm-main-tabs .nav-item {
+    flex: 1 1 0% !important;
+}
+.crm-main-tabs .nav-link {
+    width: 100% !important;
+    justify-content: center !important;
+    color: #475569;
+    font-weight: 700;
+    font-size: 13.5px;
+    border-radius: 10px;
+    padding: 10px 16px;
+    transition: all 0.2s ease;
+}
+.crm-main-tabs .nav-link:hover:not(.active) {
+    background: #f8fafc;
+    color: #0f172a;
+}
+.crm-main-tabs .nav-link.active {
+    background: #0f172a !important;
+    color: #ffffff !important;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.16);
+}
+/* Rank Badges */
+.rank-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+.rank-Bronze  { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.rank-Silver  { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+.rank-Gold    { background: #fef08a; color: #854d0e; border: 1px solid #facc15; }
+.rank-Diamond { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
+.rank-VIP     {
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    color: #fbbf24;
+    border: 1px solid #f59e0b;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
+}
+
+/* Filter Pills */
+.crm-rank-filter {
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    color: #475569;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 999px;
+    transition: all 0.15s ease;
+    cursor: pointer;
+}
+.crm-rank-filter:hover { background: #f8fafc; border-color: #cbd5e1; }
+.crm-rank-filter.active { background: #0f172a; color: #ffffff; border-color: #0f172a; }
+
+/* Avatar Circle */
+.cust-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    background: #eef2ff;
+    color: #4f46e5;
+    font-weight: 700;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+/* Table Styling */
+.crm-table thead th {
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 13px 16px;
+}
+.crm-table tbody td {
+    padding: 14px 16px;
+    vertical-align: middle;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 13.5px;
+}
+.crm-table tbody tr:hover { background-color: #f8fafc; }
+
+/* 5 MÀU THẺ THÀNH VIÊN LUXURY METALLIC ĐỒNG BỘ */
+.member-virtual-card {
+    border-radius: 20px;
+    padding: 22px;
+    color: #ffffff !important;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.22);
+}
+.member-virtual-card::after {
+    content: "";
+    position: absolute;
+    top: -45%;
+    right: -20%;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.16) 0%, transparent 70%);
+    pointer-events: none;
+}
+.member-virtual-card h5 {
+    color: #ffffff !important;
+    letter-spacing: 0.2px;
+}
+
+/* BRONZE: Đồng nâu đỏ trầm ấm (Copper / Espresso Bronze) */
+.member-virtual-card.card-Bronze {
+    background: linear-gradient(135deg, #431407 0%, #7c2d12 52%, #9a3412 100%) !important;
+    border: 1px solid rgba(251, 146, 60, 0.45) !important;
+    box-shadow: 0 12px 28px rgba(124, 45, 18, 0.28) !important;
+}
+.member-virtual-card.card-Silver {
+    background: linear-gradient(135deg, #1e293b 0%, #334155 55%, #475569 100%);
+    border: 1.5px solid rgba(203, 213, 225, 0.5);
+}
+.member-virtual-card.card-Silver .card-points-highlight { color: #e2e8f0 !important; }
+
+/* GOLD: Vàng kim rực rỡ sang trọng (Luxury Imperial Gold) */
+.member-virtual-card.card-Gold {
+    background: linear-gradient(135deg, #78350f 0%, #d97706 45%, #f59e0b 82%, #fbbf24 100%) !important;
+    border: 1px solid rgba(254, 240, 138, 0.75) !important;
+    box-shadow: 0 12px 30px rgba(217, 119, 6, 0.35) !important;
+    text-shadow: 0 1px 2px rgba(69, 26, 3, 0.45);
+}
+
+.member-virtual-card.card-Diamond {
+    background: linear-gradient(135deg, #082f49 0%, #0c4a6e 50%, #0369a1 100%);
+    border: 1.5px solid rgba(125, 211, 252, 0.55);
+}
+.member-virtual-card.card-Diamond .card-points-highlight { color: #7dd3fc !important; }
+
+.member-virtual-card.card-VIP {
+    background: linear-gradient(135deg, #090d16 0%, #18181b 55%, #27200e 100%);
+    border: 1.5px solid rgba(251, 191, 36, 0.6);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+}
+.member-virtual-card.card-VIP h5,
+.member-virtual-card.card-VIP .card-points-highlight {
+    color: #fbbf24 !important;
+}
+
+.progress-tier-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    overflow: hidden;
+}
+.progress-tier-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #f59e0b, #fde047);
+    border-radius: 999px;
+    transition: width 0.4s ease;
+}
+
+/* Mini Insight Cards trong Hồ sơ chi tiết */
+.detail-insight-box {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    height: 100%;
+}
+.detail-insight-box small {
+    font-size: 11px;
+    color: #64748b;
+    display: block;
+    margin-bottom: 3px;
+}
+.detail-insight-box .insight-val {
+    font-size: 14.5px;
+    font-weight: 800;
+    color: #0f172a;
+}
+
+/* Bảng chi tiết giãn dòng thoáng */
+.detail-history-table thead th {
+    background: #f8fafc;
+    color: #475569;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 11px 14px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+.detail-history-table tbody td {
+    padding: 12px 14px;
+    font-size: 13px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+/* Reward Card */
+.reward-catalog-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 18px;
+    transition: all 0.2s ease;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+.reward-catalog-card:hover {
+    border-color: #6366f1;
+    box-shadow: 0 8px 20px rgba(79, 70, 229, 0.08);
+}
+.reward-catalog-card.inactive-reward { opacity: 0.6; background: #f8fafc; }

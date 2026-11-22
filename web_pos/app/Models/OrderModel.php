@@ -24,8 +24,9 @@ class OrderModel {
 
             $area['tables'] = array_map(function($t) {
                 $statusStr = 'available';
-                if ($t['status'] == 1) $statusStr = 'occupied';
-                else if ($t['status'] == 2) $statusStr = 'reserved';
+                if ((int)$t['status'] === 1) $statusStr = 'occupied';
+                else if ((int)$t['status'] === 2) $statusStr = 'reserved';
+                else if ((int)$t['status'] === 3) $statusStr = 'paid';
 
                 return [
                     'id'     => $t['id'],
@@ -78,7 +79,7 @@ class OrderModel {
         return $customer;
     }
 
-    // 5. TẠO ĐƠN HÀNG TOÀN NĂNG (TẠI CHỖ, MANG VỀ, GRAB/SHOPEE, TÍCH ĐIỂM & TRỪ TỒN KHO)
+    // 5. TẠO ĐƠN HÀNG TOÀN NĂNG (TẠI CHỖ, MANG VỀ, GRAB/SHOPEE, TÍCH ĐIỂM, TRỪ TỒN KHO & AUDIT LOG)
     public function createOrder($data) {
         try {
             $this->db->beginTransaction();
@@ -109,20 +110,45 @@ class OrderModel {
             $orderStatus   = $data['order_status'] ?? 'completed';
             $shiftId       = $data['shift_id'] ?? null;
 
+            // Dọn bản ghi đơn tạm (serving) và giỏ hàng tạm của bàn trước khi chốt hóa đơn thanh toán
+            if ($orderType === 'dine_in' && $tableId) {
+                $stmtOldServing = $this->db->prepare("SELECT id FROM orders WHERE table_id = ? AND order_status = 'serving'");
+                $stmtOldServing->execute([$tableId]);
+                $oldIds = $stmtOldServing->fetchAll(PDO::FETCH_COLUMN);
+                if (!empty($oldIds)) {
+                    $inQuery = implode(',', array_map('intval', $oldIds));
+                    $this->db->exec("DELETE FROM order_details WHERE order_id IN ({$inQuery})");
+                    $this->db->exec("DELETE FROM orders WHERE id IN ({$inQuery})");
+                }
+                $this->db->prepare("UPDATE tables SET active_cart_json = NULL WHERE id = ?")->execute([$tableId]);
+            }
+
+            // Tạo dấu vết thao tác đơn (Audit Log) ngay tại thời điểm chốt hóa đơn trên POS
+            $staffName = $_SESSION['user']['fullname'] ?? ($_SESSION['user']['full_name'] ?? ($_SESSION['user']['username'] ?? 'Thu ngân POS'));
+            $nowTime   = date('H:i');
+            $pmText    = in_array(strtolower($paymentMethod), ['banking', 'bank', 'qr']) ? 'Chuyển khoản / QR Code'
+                       : (in_array(strtolower($paymentMethod), ['card', 'app', 'wallet']) ? 'Thẻ / Ví điện tử' : 'Tiền mặt');
+
+            $auditLogJson = json_encode([
+                ['time' => $nowTime, 'actor' => $staffName, 'action' => 'Khởi tạo giao dịch tại quầy POS'],
+                ['time' => $nowTime, 'actor' => $staffName, 'action' => 'Gửi phiếu chế biến xuống quầy pha chế / bếp'],
+                ['time' => $nowTime, 'actor' => $staffName, 'action' => "Hoàn tất thanh toán ({$pmText})"]
+            ], JSON_UNESCAPED_UNICODE);
+
             // 5.1 Thêm đơn hàng vào bảng orders
             $sqlOrder = "INSERT INTO orders (
                 shift_id, table_id, order_type, app_order_code, driver_name, driver_phone, 
                 order_code, user_id, customer_id, total_amount, customer_pay, change_amount, 
                 discount, vat_percent, commission_rate, final_amount, net_amount, points_earned, points_redeemed, 
-                payment_method, order_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                payment_method, order_status, audit_log
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
             $stmtOrder = $this->db->prepare($sqlOrder);
             $stmtOrder->execute([
                 $shiftId, $tableId, $orderType, $appOrderCode, $driverName, $driverPhone,
                 $orderCode, $userId, $customerId, $totalAmount, $customerPay, $changeAmount,
                 $discount, $vatPercent, $commissionRate, $finalAmount, $netAmount, $pointsEarned, $pointsRedeemed,
-                $paymentMethod, $orderStatus
+                $paymentMethod, $orderStatus, $auditLogJson
             ]);
 
             $orderId = $this->db->lastInsertId();
@@ -132,7 +158,7 @@ class OrderModel {
                 $sqlItem = "INSERT INTO order_details (order_id, product_id, quantity, options_json, item_note, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)";
                 $stmtItem = $this->db->prepare($sqlItem);
 
-                // Lấy sẵn 1 product_id hợp lệ mặc định trong bảng products để tránh lỗi FOREIGN KEY (order_details_ibfk_2) với quà tặng ảo
+                // Lấy sẵn 1 product_id hợp lệ mặc định trong bảng products để tránh lỗi FOREIGN KEY với quà tặng ảo
                 $fallbackStmt = $this->db->query("SELECT id FROM products ORDER BY id ASC LIMIT 1");
                 $fallbackProductId = $fallbackStmt ? (int)$fallbackStmt->fetchColumn() : 1;
 
@@ -219,6 +245,20 @@ class OrderModel {
 
                 // Cập nhật hạng thành viên dựa trên tổng chi tiêu tích lũy (không tụt hạng khi khách tiêu điểm)
                 $this->updateCustomerRank($customerId);
+
+                // Ghi log biến động điểm vào bảng point_transactions
+                $stmtBal = $this->db->prepare("SELECT total_points FROM customers WHERE id = ?");
+                $stmtBal->execute([$customerId]);
+                $balAfter = (int)$stmtBal->fetchColumn();
+
+                if ($pointsEarned > 0) {
+                    $stmtLogEarn = $this->db->prepare("INSERT INTO point_transactions (customer_id, order_id, type, points_change, balance_after, description, created_by) VALUES (?, ?, 'earn', ?, ?, ?, 'POS')");
+                    $stmtLogEarn->execute([$customerId, $orderId, $pointsEarned, $balAfter, "Tích điểm đơn hàng {$orderCode}"]);
+                }
+                if ($pointsRedeemed > 0) {
+                    $stmtLogRedeem = $this->db->prepare("INSERT INTO point_transactions (customer_id, order_id, type, points_change, balance_after, description, created_by) VALUES (?, ?, 'redeem_bill', ?, ?, ?, 'POS')");
+                    $stmtLogRedeem->execute([$customerId, $orderId, -$pointsRedeemed, $balAfter, "Sử dụng điểm/đổi quà tại đơn {$orderCode}"]);
+                }
             }
 
             $this->db->commit();

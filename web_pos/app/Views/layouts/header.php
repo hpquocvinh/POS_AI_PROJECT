@@ -200,7 +200,7 @@ if (!function_exists('isMenuActive')) {
         <a href="<?= BASE_URL ?>/category" class="nav-link-custom <?= isMenuActive('/category', $route) ?>">
             <i class="fa-solid fa-layer-group"></i> Quản Lý Danh Mục 
         </a>
-        <a href="<?= BASE_URL ?>/order" class="nav-link-custom <?= isMenuActive('/order', $route) ?>">
+        <a href="<?= BASE_URL ?>/orderManage" class="nav-link-custom <?= isMenuActive('/orderManage', $route) ?>">
             <i class="fa-solid fa-receipt"></i> Đơn Hàng
         </a>
         <a href="<?= BASE_URL ?>/customer" class="nav-link-custom <?= isMenuActive('/customer', $route) ?>">

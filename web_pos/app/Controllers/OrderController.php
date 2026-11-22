@@ -27,6 +27,18 @@ class OrderController extends Controller {
                 $db->exec("ALTER TABLE orders ADD COLUMN vat_percent DECIMAL(5,2) DEFAULT 8.00");
             }
 
+            // Đảm bảo có sẵn cột cancel_reason và audit_log để đồng bộ với trang Quản lý đơn hàng
+            $checkCancelOrderCol = $db->query("SHOW COLUMNS FROM orders LIKE 'cancel_reason'");
+            if (!$checkCancelOrderCol || $checkCancelOrderCol->rowCount() == 0) {
+                $db->exec("ALTER TABLE orders ADD COLUMN cancel_reason VARCHAR(255) NULL AFTER order_status");
+            }
+            $checkAuditLogCol = $db->query("SHOW COLUMNS FROM orders LIKE 'audit_log'");
+            if (!$checkAuditLogCol || $checkAuditLogCol->rowCount() == 0) {
+                $db->exec("ALTER TABLE orders ADD COLUMN audit_log TEXT NULL AFTER cancel_reason");
+            }
+
+
+
             $db->exec("ALTER TABLE shifts MODIFY COLUMN initial_cash DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE shifts MODIFY COLUMN total_revenue DECIMAL(15,2) DEFAULT 0");
             $db->exec("ALTER TABLE shifts MODIFY COLUMN offline_revenue DECIMAL(15,2) DEFAULT 0");
@@ -89,6 +101,34 @@ class OrderController extends Controller {
         }
     }
 
+    private function getLoyaltySettingsData($db) {
+        $defaults = [
+            'vnd_per_point_earn'   => 10000,
+            'vnd_per_point_redeem' => 100,
+            'silver_min_spend'     => 1000000,
+            'gold_min_spend'       => 3000000,
+            'diamond_min_spend'    => 6000000,
+            'vip_min_spend'        => 10000000,
+            'bronze_discount'      => 0,
+            'silver_discount'      => 0,
+            'gold_discount'        => 5,
+            'diamond_discount'     => 10,
+            'vip_discount'         => 15,
+            'bronze_multiplier'    => 1.0,
+            'silver_multiplier'    => 1.2,
+            'gold_multiplier'      => 1.5,
+            'diamond_multiplier'   => 2.0,
+            'vip_multiplier'       => 2.5
+        ];
+        try {
+            $stmt = $db->query("SELECT * FROM loyalty_settings WHERE id = 1 LIMIT 1");
+            if ($stmt && $row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                return array_merge($defaults, $row);
+            }
+        } catch (Exception $e) {}
+        return $defaults;
+    }
+
     public function index() {
         $db = Database::getInstance();
         $stmtShift = $db->prepare("SELECT * FROM shifts WHERE status = 'open' ORDER BY id DESC LIMIT 1");
@@ -109,7 +149,6 @@ class OrderController extends Controller {
         header('Content-Type: application/json');
         try {
             $phone = trim($_GET['phone'] ?? '');
-
             if (empty($phone)) {
                 echo json_encode(['success' => false, 'message' => 'SĐT không được để trống!']);
                 exit;
@@ -121,40 +160,34 @@ class OrderController extends Controller {
             $customer = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if ($customer) {
-                $customer['total_points'] = (int)($customer['total_points'] ?? 0);
-                $customer['lifetime_spend'] = (float)($customer['lifetime_spend'] ?? 0);
+                $settings = $this->getLoyaltySettingsData($db);
+                $customer['total_points']      = (int)($customer['total_points'] ?? 0);
+                $customer['lifetime_spend']    = (float)($customer['lifetime_spend'] ?? 0);
                 $customer['maintained_points'] = (int)($customer['maintained_points'] ?? 0);
 
-                // Tính hạng chuẩn dựa trên tổng chi tiêu tích lũy (10.000đ = 1 điểm xét hạng)
-                $rankPoints = (int)floor($customer['lifetime_spend'] / 10000);
+                $spend = $customer['lifetime_spend'];
                 $computedRank = 'Bronze';
-                if ($rankPoints >= 1000) $computedRank = 'VIP';
-                else if ($rankPoints >= 600) $computedRank = 'Diamond';
-                else if ($rankPoints >= 300) $computedRank = 'Gold';
-                else if ($rankPoints >= 100) $computedRank = 'Silver';
+                if ($spend >= (float)$settings['vip_min_spend'])          $computedRank = 'VIP';
+                else if ($spend >= (float)$settings['diamond_min_spend']) $computedRank = 'Diamond';
+                else if ($spend >= (float)$settings['gold_min_spend'])    $computedRank = 'Gold';
+                else if ($spend >= (float)$settings['silver_min_spend'])  $computedRank = 'Silver';
 
-                // Ưu tiên hạng cao hơn giữa hạng hiện tại và hạng theo tổng chi tiêu
                 $rankOrder = ['Bronze' => 1, 'Silver' => 2, 'Gold' => 3, 'Diamond' => 4, 'VIP' => 5];
                 $dbRank = $customer['member_rank'] ?? 'Bronze';
                 if (($rankOrder[$computedRank] ?? 1) > ($rankOrder[$dbRank] ?? 1)) {
                     $dbRank = $computedRank;
-                    $upd = $db->prepare("UPDATE customers SET member_rank = ? WHERE id = ?");
-                    $upd->execute([$dbRank, $customer['id']]);
+                    $db->prepare("UPDATE customers SET member_rank = ? WHERE id = ?")->execute([$dbRank, $customer['id']]);
                 }
 
                 $customer['member_rank'] = $dbRank;
-                $customer['rank_points'] = $rankPoints;
+                $rankKey = strtolower($dbRank) . '_discount';
+                $customer['discount_percent'] = (float)($settings[$rankKey] ?? 0);
 
-                $rankDiscounts = [
-                    'Bronze'  => 0,
-                    'Silver'  => 0,
-                    'Gold'    => 5,
-                    'Diamond' => 10,
-                    'VIP'     => 15
-                ];
-                $customer['discount_percent'] = $rankDiscounts[$customer['member_rank']] ?? 0;
-
-                echo json_encode(['success' => true, 'customer' => $customer]);
+                echo json_encode([
+                    'success'          => true,
+                    'customer'         => $customer,
+                    'loyalty_settings' => $settings
+                ]);
             } else {
                 echo json_encode(['success' => false, 'message' => 'SĐT chưa được đăng ký thành viên!']);
             }
@@ -266,6 +299,18 @@ class OrderController extends Controller {
             $upd = $db->prepare("UPDATE customers SET total_points = ? WHERE id = ?");
             $upd->execute([$newPts, $customerId]);
 
+            // Lưu lịch sử đổi quà vào point_transactions
+            $staffName = $_SESSION['user']['fullname'] ?? ($_SESSION['user']['full_name'] ?? 'POS');
+            $logStmt = $db->prepare("INSERT INTO point_transactions (customer_id, type, points_change, balance_after, description, created_by, created_at) 
+                                     VALUES (?, 'redeem_gift', ?, ?, ?, ?, NOW())");
+            $logStmt->execute([
+                $customerId,
+                -$reqPts,
+                $newPts,
+                'Đổi quà: ' . $reward['reward_name'],
+                $staffName
+            ]);
+
             echo json_encode([
                 'success' => true,
                 'new_points' => $newPts,
@@ -291,29 +336,28 @@ class OrderController extends Controller {
 
         $data['user_id'] = $_SESSION['user']['id'] ?? 1;
         $finalAmount = (float)($data['final_amount'] ?? 0);
+        $customerId  = !empty($data['customer_id']) ? (int)$data['customer_id'] : null;
 
-        $customerId = !empty($data['customer_id']) ? (int)$data['customer_id'] : null;
-        $multiplier = 1.0;
+        // Luôn khởi tạo kết nối $db trước để thanh toán khách vãng lai không bị lỗi thiếu $db
+        $db = Database::getInstance();
+        $settings = $this->getLoyaltySettingsData($db);
+        $vndPerPointEarn = max(1000, (float)$settings['vnd_per_point_earn']);
+
+        $multiplier = (float)$settings['bronze_multiplier'];
 
         if ($customerId) {
-            $db = Database::getInstance();
             $stmtC = $db->prepare("SELECT member_rank FROM customers WHERE id = ?");
             $stmtC->execute([$customerId]);
             $cRow = $stmtC->fetch(PDO::FETCH_ASSOC);
-            $cRank = $cRow['member_rank'] ?? 'Bronze';
-
-            if ($cRank === 'VIP') $multiplier = 2.5;
-            else if ($cRank === 'Diamond') $multiplier = 2.0;
-            else if ($cRank === 'Gold') $multiplier = 1.5;
-            else if ($cRank === 'Silver') $multiplier = 1.2;
+            $cRank = strtolower($cRow['member_rank'] ?? 'bronze');
+            $multiplier = (float)($settings[$cRank . '_multiplier'] ?? 1.0);
         }
         
-        $basePoints = floor($finalAmount / 10000);
+        $basePoints = floor($finalAmount / $vndPerPointEarn);
         $pointsEarned = floor($basePoints * $multiplier);
         $data['points_earned'] = $pointsEarned;
 
         try {
-            $db = Database::getInstance();
             $result = $this->orderModel->createOrder($data);
             
             if (isset($result['success']) && !$result['success']) {
@@ -336,7 +380,6 @@ class OrderController extends Controller {
                     $stmtRes = $db->prepare("UPDATE reservations SET status = 'completed' WHERE id = ?");
                     $stmtRes->execute([$reservationId]);
                 } else if ($tableId > 0) {
-                    // Chỉ đóng lịch đặt nếu lịch đó đã tới giờ (trong vòng 60p tới hoặc đã qua)
                     $stmtRes = $db->prepare("UPDATE reservations SET status = 'completed' 
                                              WHERE table_id = ? AND status IN ('confirmed', 'pending') 
                                                AND TIMESTAMPDIFF(MINUTE, NOW(), reservation_time) <= 60");
@@ -428,6 +471,8 @@ class OrderController extends Controller {
                 $vatPercent = (float)$rowVat['setting_value'];
             }
 
+            $loyaltySettings = $this->getLoyaltySettingsData($db);
+
             $stmt = $db->query("SELECT * FROM shifts WHERE status = 'open' ORDER BY id DESC LIMIT 1");
             $shift = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -442,7 +487,7 @@ class OrderController extends Controller {
                     COALESCE(SUM(CASE WHEN (LOWER(payment_method) IN ('banking','bank','card')) AND order_type NOT IN ('grab','shopee') THEN final_amount ELSE 0 END), 0) as total_bank_sales,
                     COALESCE(SUM(CASE WHEN order_type IN ('grab','shopee') OR LOWER(payment_method) = 'app' THEN final_amount ELSE 0 END), 0) as total_app_sales,
                     COUNT(id) as total_orders
-                    FROM orders WHERE shift_id = ?");
+                    FROM orders WHERE shift_id = ? AND order_status = 'completed'");
                 $statStmt->execute([$shiftId]);
                 $stats = $statStmt->fetch(PDO::FETCH_ASSOC);
 
@@ -452,7 +497,7 @@ class OrderController extends Controller {
                     FROM order_details od
                     JOIN orders o ON od.order_id = o.id
                     LEFT JOIN products p ON od.product_id = p.id
-                    WHERE o.shift_id = ?");
+                    WHERE o.shift_id = ? AND o.order_status = 'completed'");
                 $cupCakeStmt->execute([$shiftId]);
                 $cupCakeStats = $cupCakeStmt->fetch(PDO::FETCH_ASSOC);
 
@@ -460,14 +505,20 @@ class OrderController extends Controller {
                 $stats['total_cakes'] = (int)($cupCakeStats['total_cakes'] ?? 0);
 
                 echo json_encode([
-                    'success' => true,
-                    'has_open_shift' => true,
-                    'shift' => $shift,
-                    'stats' => $stats,
-                    'vat_percent' => $vatPercent
+                    'success'          => true,
+                    'has_open_shift'   => true,
+                    'shift'            => $shift,
+                    'stats'            => $stats,
+                    'vat_percent'      => $vatPercent,
+                    'loyalty_settings' => $loyaltySettings
                 ]);
             } else {
-                echo json_encode(['success' => true, 'has_open_shift' => false, 'vat_percent' => $vatPercent]);
+                echo json_encode([
+                    'success'          => true,
+                    'has_open_shift'   => false,
+                    'vat_percent'      => $vatPercent,
+                    'loyalty_settings' => $loyaltySettings
+                ]);
             }
         } catch (Exception $e) {
             echo json_encode(['success' => false, 'message' => $e->getMessage()]);
@@ -587,17 +638,17 @@ class OrderController extends Controller {
             $shiftId = isset($_GET['shift_id']) ? (int)$_GET['shift_id'] : 0;
 
             if ($shiftId > 0) {
-                $stmt = $db->prepare("SELECT * FROM orders WHERE shift_id = ? ORDER BY id DESC");
+                $stmt = $db->prepare("SELECT * FROM orders WHERE shift_id = ? AND order_status = 'completed' ORDER BY id DESC");
                 $stmt->execute([$shiftId]);
             } else {
                 $shiftStmt = $db->query("SELECT id FROM shifts WHERE status = 'open' ORDER BY id DESC LIMIT 1");
                 $openShift = $shiftStmt->fetch(PDO::FETCH_ASSOC);
 
                 if ($openShift) {
-                    $stmt = $db->prepare("SELECT * FROM orders WHERE shift_id = ? ORDER BY id DESC");
+                    $stmt = $db->prepare("SELECT * FROM orders WHERE shift_id = ? AND order_status = 'completed' ORDER BY id DESC");
                     $stmt->execute([$openShift['id']]);
                 } else {
-                    $stmt = $db->query("SELECT * FROM orders WHERE DATE(created_at) = CURDATE() ORDER BY id DESC");
+                    $stmt = $db->query("SELECT * FROM orders WHERE DATE(created_at) = CURDATE() AND order_status = 'completed' ORDER BY id DESC");
                 }
             }
 
@@ -665,7 +716,6 @@ class OrderController extends Controller {
             exit;
         }
 
-        // Quy định thời gian: Tối thiểu trước 2 tiếng (120p), tối đa 24 tiếng (1440p)
         $diffMinutes = ($targetTs - $nowTs) / 60;
         if ($diffMinutes < 115) {
             echo json_encode(['success' => false, 'message' => 'Thời gian đặt bàn phải trước giờ hẹn tối thiểu 2 tiếng!']);
@@ -678,7 +728,6 @@ class OrderController extends Controller {
 
         $db = Database::getInstance();
 
-        // 1. Kiểm tra SĐT này đã có lịch đặt đang chờ trong khung giờ gần nhau chưa (cách < 2 tiếng)
         $stmtPhoneCheck = $db->prepare("SELECT r.reservation_time, t.table_name FROM reservations r 
                                         LEFT JOIN tables t ON r.table_id = t.id 
                                         WHERE r.customer_phone = ? 
@@ -698,7 +747,6 @@ class OrderController extends Controller {
             exit;
         }
 
-        // 2. Kiểm tra xung đột khung giờ trên cùng 1 bàn (cho phép đặt nhiều lịch trên cùng 1 bàn nếu cách nhau >= 2 tiếng)
         $checkSql = "SELECT reservation_time, customer_name FROM reservations 
                      WHERE table_id = ? 
                        AND status IN ('confirmed', 'pending') 
@@ -716,7 +764,6 @@ class OrderController extends Controller {
             exit;
         }
 
-        // Tự động liên kết customer_id nếu SĐT đã là thành viên
         if (!$customerId) {
             $stmtCust = $db->prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1");
             $stmtCust->execute([$phone]);
@@ -742,7 +789,6 @@ class OrderController extends Controller {
         exit;
     }
 
-    // KHÁCH ĐÃ ĐẾN (CHECK-IN NHANH TỪ DANH SÁCH ĐẶT BÀN)
     public function checkInReservation() {
         header('Content-Type: application/json');
         $rawInput = file_get_contents('php://input');
@@ -765,7 +811,6 @@ class OrderController extends Controller {
                 exit;
             }
 
-            // Đánh dấu lịch đặt đã hoàn tất nhận bàn & chuyển trạng thái bàn thành Có khách (1)
             $updRes = $db->prepare("UPDATE reservations SET status = 'completed' WHERE id = ?");
             $updRes->execute([$reservationId]);
 
@@ -814,7 +859,6 @@ class OrderController extends Controller {
                 $result = $stmt->execute([$reason, $tableId]);
             }
 
-            // Nếu bàn đang ở trạng thái 2 (Đã đặt) và không còn lịch nào sắp tới trong 60p thì trả về Trống (0)
             if ($tableId > 0) {
                 $stmtCheckNext = $db->prepare("SELECT COUNT(*) FROM reservations 
                                                WHERE table_id = ? AND status IN ('confirmed', 'pending') 
@@ -852,11 +896,29 @@ class OrderController extends Controller {
             exit;
         }
 
-        $statusVal = ($status === 'occupied') ? 1 : (($status === 'reserved') ? 2 : 0);
+        $statusVal = 0;
+        if ($status === 'occupied') $statusVal = 1;
+        elseif ($status === 'reserved') $statusVal = 2;
+        elseif ($status === 'paid') $statusVal = 3;
 
         $db = Database::getInstance();
-        $stmt = $db->prepare("UPDATE tables SET status = ? WHERE id = ?");
+        if ($statusVal !== 1) {
+            $stmt = $db->prepare("UPDATE tables SET status = ?, active_cart_json = NULL WHERE id = ?");
+        } else {
+            $stmt = $db->prepare("UPDATE tables SET status = ? WHERE id = ?");
+        }
+
         if ($stmt->execute([$statusVal, $tableId])) {
+            if ($statusVal === 0) {
+                $stmtOld = $db->prepare("SELECT id FROM orders WHERE table_id = ? AND order_status = 'serving'");
+                $stmtOld->execute([$tableId]);
+                $oldIds = $stmtOld->fetchAll(PDO::FETCH_COLUMN);
+                if (!empty($oldIds)) {
+                    $inQ = implode(',', array_map('intval', $oldIds));
+                    $db->exec("DELETE FROM order_details WHERE order_id IN ({$inQ})");
+                    $db->exec("DELETE FROM orders WHERE id IN ({$inQ})");
+                }
+            }
             echo json_encode(['success' => true, 'message' => 'Cập nhật trạng thái bàn thành công!']);
         } else {
             echo json_encode(['success' => false, 'message' => 'Không thể cập nhật trạng thái bàn!']);
@@ -864,14 +926,119 @@ class OrderController extends Controller {
         exit;
     }
 
-    // LẤY DANH SÁCH ĐẶT BÀN ĐA LỊCH & TRẠNG THÁI BÀN THÔNG MINH (CHỈ ĐỔI MÀU VÀNG TRƯỚC 60 PHÚT)
+    // Lưu trạng thái bàn + giỏ hàng tạm xuống DB & đồng bộ đơn 'serving' sang trang Quản lý đơn hàng
+    public function syncTableOrderState() {
+        header('Content-Type: application/json');
+        try {
+            $data = json_decode(file_get_contents('php://input'), true);
+            $tableId = (int)($data['table_id'] ?? 0);
+            $status  = trim($data['status'] ?? 'occupied');
+            $items   = $data['items'] ?? [];
+            $shiftId = !empty($data['shift_id']) ? (int)$data['shift_id'] : null;
+            $vatPct  = (float)($data['vat_percent'] ?? 8);
+
+            if ($tableId <= 0) {
+                echo json_encode(['success' => false, 'message' => 'ID bàn không hợp lệ']);
+                exit;
+            }
+
+            $db = Database::getInstance();
+            $statusVal = ($status === 'paid') ? 3 : (($status === 'occupied') ? 1 : 0);
+            $cartJson  = !empty($items) ? json_encode($items, JSON_UNESCAPED_UNICODE) : null;
+
+            $stmt = $db->prepare("UPDATE tables SET status = ?, active_cart_json = ? WHERE id = ?");
+            $stmt->execute([$statusVal, $cartJson, $tableId]);
+
+            $stmtOld = $db->prepare("SELECT id FROM orders WHERE table_id = ? AND order_status = 'serving' LIMIT 1");
+            $stmtOld->execute([$tableId]);
+            $existingServing = $stmtOld->fetch(PDO::FETCH_ASSOC);
+
+            if (!empty($items) && $statusVal === 1) {
+                $subTotal = 0;
+                foreach ($items as $it) {
+                    $subTotal += ((float)($it['price'] ?? 0)) * ((int)($it['qty'] ?? 1));
+                }
+                $finalAmt = round($subTotal * (1 + $vatPct / 100));
+                $userId   = $_SESSION['user']['id'] ?? 1;
+
+                if ($existingServing) {
+                    $servingOrderId = (int)$existingServing['id'];
+                    $db->prepare("UPDATE orders SET total_amount = ?, vat_percent = ?, final_amount = ?, net_amount = ? WHERE id = ?")
+                       ->execute([$subTotal, $vatPct, $finalAmt, $finalAmt, $servingOrderId]);
+                    $db->prepare("DELETE FROM order_details WHERE order_id = ?")->execute([$servingOrderId]);
+                } else {
+                    $orderCode = 'HD' . time();
+                    $staffName = $_SESSION['user']['fullname'] ?? ($_SESSION['user']['username'] ?? 'Thu ngân POS');
+                    $auditJson = json_encode([
+                        ['time' => date('H:i'), 'actor' => $staffName, 'action' => 'Mở bàn & gửi phiếu chế biến xuống bếp']
+                    ], JSON_UNESCAPED_UNICODE);
+
+                    $stmtIns = $db->prepare("INSERT INTO orders (shift_id, table_id, order_type, order_code, user_id, total_amount, vat_percent, final_amount, net_amount, payment_method, order_status, audit_log)
+                                             VALUES (?, ?, 'dine_in', ?, ?, ?, ?, ?, ?, 'cash', 'serving', ?)");
+                    $stmtIns->execute([$shiftId, $tableId, $orderCode, $userId, $subTotal, $vatPct, $finalAmt, $finalAmt, $auditJson]);
+                    $servingOrderId = (int)$db->lastInsertId();
+                }
+
+                $fallbackStmt = $db->query("SELECT id FROM products ORDER BY id ASC LIMIT 1");
+                $fallbackPid  = $fallbackStmt ? (int)$fallbackStmt->fetchColumn() : 1;
+                $stmtDet = $db->prepare("INSERT INTO order_details (order_id, product_id, quantity, options_json, item_note, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)");
+
+                foreach ($items as $it) {
+                    $pid = (is_numeric($it['id'] ?? '') && (int)$it['id'] > 0) ? (int)$it['id'] : $fallbackPid;
+                    $qty = max(1, (int)($it['qty'] ?? 1));
+                    $pr  = (float)($it['price'] ?? 0);
+                    $opts = json_encode([
+                        'size'     => $it['size'] ?? '',
+                        'sugar'    => $it['sugar'] ?? '',
+                        'ice'      => $it['ice'] ?? '',
+                        'toppings' => $it['toppings'] ?? []
+                    ], JSON_UNESCAPED_UNICODE);
+                    $stmtDet->execute([$servingOrderId, $pid, $qty, $opts, $it['note'] ?? '', $pr, $pr * $qty]);
+                }
+            } elseif ($existingServing && empty($items)) {
+                $sid = (int)$existingServing['id'];
+                $db->prepare("DELETE FROM order_details WHERE order_id = ?")->execute([$sid]);
+                $db->prepare("DELETE FROM orders WHERE id = ?")->execute([$sid]);
+            }
+
+            echo json_encode(['success' => true]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    // Lấy toàn bộ trạng thái bàn & giỏ hàng đang phục vụ từ DB khi load/quay lại trang POS
+    public function getActiveTableStates() {
+        header('Content-Type: application/json');
+        try {
+            $db = Database::getInstance();
+            $stmt = $db->query("SELECT id, status, active_cart_json FROM tables WHERE table_type = 'dine_in'");
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $result = [];
+            foreach ($rows as $r) {
+                $tid = (int)$r['id'];
+                $st  = (int)$r['status'];
+                $cart = !empty($r['active_cart_json']) ? json_decode($r['active_cart_json'], true) : [];
+                $result[$tid] = [
+                    'status' => $st,
+                    'cart'   => is_array($cart) ? $cart : []
+                ];
+            }
+            echo json_encode(['success' => true, 'tables' => $result]);
+        } catch (Exception $e) {
+            echo json_encode(['success' => false, 'message' => $e->getMessage()]);
+        }
+        exit;
+    }
+
     public function getReservations() {
         date_default_timezone_set('Asia/Ho_Chi_Minh');
         header('Content-Type: application/json');
         try {
             $db = Database::getInstance();
 
-            // 1. Lấy danh sách toàn bộ bàn dine_in
             $stmtTables = $db->query("SELECT t.id as table_id, t.table_name, t.status as table_status, a.area_name
                                       FROM tables t
                                       LEFT JOIN areas a ON t.area_id = a.id
@@ -879,7 +1046,6 @@ class OrderController extends Controller {
                                       ORDER BY t.id ASC");
             $tables = $stmtTables->fetchAll(PDO::FETCH_ASSOC);
 
-            // 2. Lấy toàn bộ lịch đặt đang chờ (confirmed/pending), sắp xếp theo giờ hẹn tăng dần
             $stmtRes = $db->query("SELECT r.id as reservation_id, r.table_id, t.table_name, a.area_name,
                                           r.customer_id, r.customer_name, r.customer_phone, r.guest_count,
                                           DATE_FORMAT(r.reservation_time, '%Y-%m-%d %H:%i:%s') as reservation_time, 
@@ -892,7 +1058,6 @@ class OrderController extends Controller {
                                    ORDER BY r.reservation_time ASC");
             $allReservations = $stmtRes->fetchAll(PDO::FETCH_ASSOC);
 
-            // Gom lịch theo table_id & đồng bộ màu bàn thông minh
             $resByTable = [];
             foreach ($allReservations as $r) {
                 $tid = (int)$r['table_id'];
@@ -905,9 +1070,7 @@ class OrderController extends Controller {
                 $tbl['upcoming_reservations'] = $resByTable[$tid] ?? [];
                 $nextRes = $tbl['upcoming_reservations'][0] ?? null;
 
-                // Nếu bàn đang Trống (0) mà có lịch hẹn trong vòng 60 phút tới -> tự động chuyển sang 2 (Đã đặt)
-                // Ngược lại nếu bàn đang 2 (Đã đặt) nhưng lịch hẹn còn > 60 phút nữa -> trả về 0 (Trống) để khách vãng lai vẫn ngồi xoay tua được!
-                if ((int)$tbl['table_status'] !== 1) {
+                if (!in_array((int)$tbl['table_status'], [1, 3], true)) {
                     if ($nextRes && (int)$nextRes['mins_until'] <= 60 && (int)$nextRes['mins_until'] >= -30) {
                         if ((int)$tbl['table_status'] !== 2) {
                             $db->prepare("UPDATE tables SET status = 2 WHERE id = ?")->execute([$tid]);
@@ -932,7 +1095,7 @@ class OrderController extends Controller {
         }
         exit;
     }
-    // TẠO LỊCH ĐẶT BÀN MỚI (CÓ CHECK TRÙNG SĐT & ĐỒNG BỘ KHÁCH HÀNG)
+
     public function createReservation() {
         date_default_timezone_set('Asia/Ho_Chi_Minh');
         header('Content-Type: application/json');
@@ -952,7 +1115,6 @@ class OrderController extends Controller {
 
             $db = Database::getInstance();
 
-            // 1. Kiểm tra trùng SĐT đang có lịch đặt bàn hiệu lực (confirmed/pending)
             $stmtDupPhone = $db->prepare("SELECT r.id, r.reservation_time, t.table_name 
                                           FROM reservations r
                                           LEFT JOIN tables t ON r.table_id = t.id
@@ -973,7 +1135,6 @@ class OrderController extends Controller {
                 exit;
             }
 
-            // 2. Kiểm tra trùng khung giờ trên cùng 1 bàn (cách nhau tối thiểu 90 phút)
             $stmtConflict = $db->prepare("SELECT customer_name, reservation_time 
                                           FROM reservations 
                                           WHERE table_id = ? 
@@ -992,12 +1153,10 @@ class OrderController extends Controller {
                 exit;
             }
 
-            // 3. Tự động liên kết customer_id nếu SĐT đã là thành viên
             $stmtCus = $db->prepare("SELECT id FROM customers WHERE phone = ? LIMIT 1");
             $stmtCus->execute([$customerPhone]);
             $customerId = $stmtCus->fetchColumn() ?: null;
 
-            // 4. Lưu lịch đặt bàn vào DB
             $stmt = $db->prepare("INSERT INTO reservations (table_id, customer_id, customer_name, customer_phone, guest_count, reservation_time, note, status) 
                                   VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed')");
             $stmt->execute([$tableId, $customerId, $customerName, $customerPhone, $guestCount, $reservationTime, $note]);
@@ -1013,6 +1172,7 @@ class OrderController extends Controller {
         }
         exit;
     }
+
     public function checkShiftTimeout() {
         date_default_timezone_set('Asia/Ho_Chi_Minh');
         header('Content-Type: application/json');

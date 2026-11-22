@@ -60,6 +60,31 @@ let shiftStats = {
     totalCups: 0,
     totalCakes: 0
 };
+// cấu hình tỉ lệ quy đổi động
+let posLoyaltySettings = {
+    vnd_per_point_earn: 10000,
+    vnd_per_point_redeem: 100,
+    silver_min_spend: 1000000,
+    gold_min_spend: 3000000,
+    diamond_min_spend: 6000000,
+    vip_min_spend: 10000000,
+    bronze_discount: 0, silver_discount: 0, gold_discount: 5, diamond_discount: 10, vip_discount: 15,
+    bronze_multiplier: 1.0, silver_multiplier: 1.2, gold_multiplier: 1.5, diamond_multiplier: 2.0, vip_multiplier: 2.5
+};
+
+function getRankMultiplier(rank) {
+    const r = String(rank || 'Bronze').toLowerCase();
+    return parseFloat(posLoyaltySettings[`${r}_multiplier`] || 1.0);
+}
+
+function calculateEarnedPoints(grandTotal, customer = null) {
+    if (currentOrderType === 'online' || grandTotal <= 0) return 0;
+    const earnRate = Math.max(1000, parseFloat(posLoyaltySettings.vnd_per_point_earn || 10000));
+    const basePts = Math.floor(grandTotal / earnRate);
+    if (!customer) return basePts;
+    const mult = getRankMultiplier(customer.member_rank);
+    return Math.floor(basePts * mult);
+}
 
 let optionModal, stickerPrintModal, checkoutModal, shiftModal, mergeTableModal, splitTableModal, reservationManagerModal, cancelReserveModal, orderHistoryModal, reprintBillModal, customAlertModal;
 
@@ -96,6 +121,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     restoreShiftFromSession();
     checkOpenShiftFromDB();
+    restoreActiveTablesFromDB();
     fetchReservationsFromDB();
     
     setInterval(fetchReservationsFromDB, 30000);
@@ -105,6 +131,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!document.hidden) {
             restoreShiftFromSession();
             checkOpenShiftFromDB();
+            restoreActiveTablesFromDB();
         }
     });
 });
@@ -177,6 +204,11 @@ async function checkOpenShiftFromDB() {
     try {
         let res = await fetch(BASE_URL_JS + '/order/getShiftStatus').then(r => r.json());
         
+        if (res.loyalty_settings) {
+            posLoyaltySettings = { ...posLoyaltySettings, ...res.loyalty_settings };
+            renderCart();
+        }
+
         if (res.vat_percent !== undefined) {
             currentVatPercent = parseFloat(res.vat_percent);
             let vatLbl = document.getElementById('vat-label-display');
@@ -254,7 +286,6 @@ function fetchReservationsFromDB() {
                 let now = new Date();
                 let totalResCount = 0;
 
-                // Đọc trực tiếp từ res.reservations trả về từ OrderController
                 let dbGrouped = {};
                 let rawReservations = Array.isArray(res.reservations) ? res.reservations : [];
 
@@ -278,7 +309,6 @@ function fetchReservationsFromDB() {
                     }
                 });
 
-                // Đồng bộ chuẩn 100% từ DB (F5 không bao giờ mất lịch)
                 tableReservationData = dbGrouped;
 
                 document.querySelectorAll('#table-section .table-badge').forEach(badge => {
@@ -322,7 +352,6 @@ function fetchReservationsFromDB() {
                     badgeHeaderCount.classList.toggle('d-none', totalResCount === 0);
                 }
 
-                // Cập nhật lại bảng danh sách nếu modal đặt bàn đang mở
                 if (document.getElementById('reservationManagerModal')?.classList.contains('show')) {
                     renderReservationTableList();
                 }
@@ -330,6 +359,7 @@ function fetchReservationsFromDB() {
         })
         .catch(err => console.error("Lỗi đồng bộ lịch đặt bàn:", err));
 }
+
 function showCustomAlert(msg, title = "Thông Báo Hệ Thống", type = "danger") {
     let circle = document.getElementById('alertIconCircle');
     let icon = document.getElementById('alertIcon');
@@ -835,7 +865,6 @@ function proceedSelectPaidTable(tableId, tableName) {
 
     loadCartForCurrentTable();
     updateCheckoutButton();
-    // Không tự động thu gọn sơ đồ bàn khi bấm chọn bàn — chỉ thu gọn khi bấm nút chủ động
 }
 
 function confirmTurnaroundTable(tableId, tableName, rTime) {
@@ -866,7 +895,6 @@ function checkInReservation(tableId, resId) {
 
     delete turnaroundTablesMap[tableId];
 
-    // Truyền kèm reservation_id để PHP chỉ hủy đúng lịch của khách vừa đến, giữ nguyên lịch khách sau
     fetch(BASE_URL_JS + '/order/cancelReservation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -908,6 +936,7 @@ function checkInReservation(tableId, resId) {
     }
     showCustomAlert(`Đã Check-in bàn ${tableName} cho khách hàng ${checkedInData ? checkedInData.name : ''}!`, "Check-in Thành Công", "success");
 }
+
 function releaseCurrentTable() {
     if (!currentTableId) return;
     releasePaidTable(currentTableId);
@@ -934,11 +963,10 @@ function getAllowedModifiers(product) {
         .filter(Boolean);
 }
 
-// KIỂM TRA TỒN KHO & HẠN SỬ DỤNG (CHỈ HỎI 1 LẦN ĐẦU CHO MỖI MÓN TRONG ĐƠN)
+// KIỂM TRA TỒN KHO & HẠN SỬ DỤNG
 function checkStockAndExpiryWarning(product, additionalQty = 1, onProceedCallback) {
     let pid = String(product.id);
 
-    // Nếu nhân viên đã bấm xác nhận "Vẫn tiếp tục order" cho món này trước đó -> tự do tăng số lượng không hỏi lại
     if (confirmedStockBypassIds.has(pid)) {
         onProceedCallback();
         return;
@@ -1246,7 +1274,13 @@ function changeQty(index, delta) {
     const applyQtyChange = () => {
         item.qty += delta;
         if (item.qty <= 0) cart.splice(index, 1);
-        if (currentTableId) activeOrders[currentTableId] = cart;
+        if (currentTableId) {
+            activeOrders[currentTableId] = cart;
+            let badge = document.getElementById('table-btn-' + currentTableId);
+            if (typeof currentTableId === 'number' && badge && badge.classList.contains('status-occupied')) {
+                persistTableOrderStateToDB(currentTableId, 'occupied', cart);
+            }
+        }
         renderCart();
 
         if (currentOrderType === 'takeaway') renderTakeawayCards();
@@ -1267,7 +1301,13 @@ function removeItem(index) {
         return;
     }
     cart.splice(index, 1);
-    if (currentTableId) activeOrders[currentTableId] = cart;
+    if (currentTableId) {
+        activeOrders[currentTableId] = cart;
+        let badge = document.getElementById('table-btn-' + currentTableId);
+        if (typeof currentTableId === 'number' && badge && badge.classList.contains('status-occupied')) {
+            persistTableOrderStateToDB(currentTableId, 'occupied', cart);
+        }
+    }
     renderCart();
 
     if (currentOrderType === 'takeaway') renderTakeawayCards();
@@ -1289,7 +1329,7 @@ function clearCart() {
     if (currentOrderType === 'online') renderOnlineCards();
 }
 
-// TÍNH TỔNG TIỀN & MINH BẠCH ƯU ĐÃI HẠNG THẺ + ĐỔI ĐIỂM
+// TÍNH TỔNG TIỀN & MINH BẠCH ƯU ĐÃI HẠNG THẺ + ĐỔI ĐIỂM + HỆ SỐ NHÂN ĐIỂM
 function updateTotals(subTotal) {
     let vat = subTotal * (currentVatPercent / 100);
     let baseGrandTotal = subTotal + vat;
@@ -1305,7 +1345,7 @@ function updateTotals(subTotal) {
 
         if (selectedCustomer) {
             tierName = selectedCustomer.member_rank || 'Bronze';
-            tierPercent = parseFloat(selectedCustomer.discount_percent || 0);
+            tierPercent = parseFloat(selectedCustomer.discount_percent || posLoyaltySettings[`${tierName.toLowerCase()}_discount`] || 0);
             if (tierPercent > 0) {
                 tierDiscountMoney = Math.round(remainingAfterPoints * (tierPercent / 100));
             }
@@ -1343,8 +1383,20 @@ function updateTotals(subTotal) {
 
     const earnedPtsEl = document.getElementById('order-earned-points-val');
     if (earnedPtsEl) {
-        let earnedPts = (currentOrderType !== 'online') ? Math.floor(grandTotal / 10000) : 0;
-        earnedPtsEl.innerText = `+${earnedPts} điểm`;
+        if (currentOrderType === 'online') {
+            earnedPtsEl.innerText = '+0 điểm';
+        } else if (selectedCustomer) {
+            let earnedPts = calculateEarnedPoints(grandTotal, selectedCustomer);
+            let rank = selectedCustomer.member_rank || 'Bronze';
+            let mult = getRankMultiplier(rank);
+            let multTag = mult > 1 ? ` (${rank} x${mult})` : ` (${rank})`;
+            earnedPtsEl.innerText = `+${earnedPts} điểm${multTag}`;
+        } else {
+            let basePts = calculateEarnedPoints(grandTotal, null);
+            earnedPtsEl.innerText = basePts > 0
+                ? `+${basePts} điểm (Nhập SĐT để tích)`
+                : `+0 điểm (Nhập SĐT để tích)`;
+        }
     }
 
     updateCheckoutButton();
@@ -1372,7 +1424,8 @@ function getBillAmountBeforePointRedeem() {
     let tierDiscountMoney = 0;
 
     if (selectedCustomer && currentOrderType !== 'online') {
-        let tierPercent = parseFloat(selectedCustomer.discount_percent || 0);
+        let tierName = selectedCustomer.member_rank || 'Bronze';
+        let tierPercent = parseFloat(selectedCustomer.discount_percent || posLoyaltySettings[`${tierName.toLowerCase()}_discount`] || 0);
         if (tierPercent > 0) {
             tierDiscountMoney = Math.round(baseGrandTotal * (tierPercent / 100));
         }
@@ -1389,9 +1442,10 @@ function openCrmMemberModal() {
     let cName = selectedCustomer.customer_name || 'Khách hàng';
     let cPhone = selectedCustomer.phone || '';
     let cRank = selectedCustomer.member_rank || 'Bronze';
-    let discountPct = parseFloat(selectedCustomer.discount_percent || 0);
+    let discountPct = parseFloat(selectedCustomer.discount_percent || posLoyaltySettings[`${cRank.toLowerCase()}_discount`] || 0);
     let availPts = Math.max(0, parseInt(selectedCustomer.total_points || 0) - pointsToRedeem);
-    let cSpent = parseFloat(selectedCustomer.lifetime_spend || selectedCustomer.total_spent || (parseInt(selectedCustomer.total_points || 0) * 10000));
+    let cSpent = parseFloat(selectedCustomer.lifetime_spend || selectedCustomer.total_spent || 0);
+    let redeemRate = Math.max(1, parseFloat(posLoyaltySettings.vnd_per_point_redeem || 100));
 
     document.getElementById('crm-modal-cust-name').innerText = cName;
     document.getElementById('crm-modal-cust-phone').innerText = cPhone;
@@ -1399,42 +1453,68 @@ function openCrmMemberModal() {
     document.getElementById('crm-modal-spent-val').innerText = cSpent.toLocaleString() + " đ";
     document.getElementById('crm-modal-rank-pill').innerText = `${cRank.toUpperCase()}${discountPct > 0 ? ` (-${discountPct}%)` : ''}`;
 
-    // Đổi màu banner thẻ thành viên theo hạng
+    let redeemBadge = document.getElementById('crm-modal-redeem-rate-badge');
+    if (redeemBadge) {
+        redeemBadge.innerText = `1 pt = ${redeemRate.toLocaleString()}đ`;
+    }
+
     let banner = document.getElementById('crm-modal-card-banner');
     if (banner) {
-        if (cRank === 'VIP' || cRank === 'Diamond') {
-            banner.style.background = 'linear-gradient(135deg, #312e81 0%, #4338ca 100%)';
-        } else if (cRank === 'Gold') {
-            banner.style.background = 'linear-gradient(135deg, #78350f 0%, #b45309 100%)';
-        } else if (cRank === 'Silver') {
-            banner.style.background = 'linear-gradient(135deg, #334155 0%, #64748b 100%)';
-        } else {
-            banner.style.background = 'linear-gradient(135deg, #451a03 0%, #78350f 100%)';
-        }
+        banner.className = `member-virtual-card card-${cRank || 'Bronze'} mb-3`;
+    }
+
+    const sSilver  = parseFloat(posLoyaltySettings.silver_min_spend || 1000000);
+    const sGold    = parseFloat(posLoyaltySettings.gold_min_spend || 3000000);
+    const sDiamond = parseFloat(posLoyaltySettings.diamond_min_spend || 6000000);
+    const sVip     = parseFloat(posLoyaltySettings.vip_min_spend || 10000000);
+
+    let nextRank = 'Silver', nextTarget = sSilver, prevTarget = 0;
+    if (cRank === 'Bronze')       { nextRank = 'Silver';  prevTarget = 0;        nextTarget = sSilver; }
+    else if (cRank === 'Silver')  { nextRank = 'Gold';    prevTarget = sSilver;  nextTarget = sGold; }
+    else if (cRank === 'Gold')    { nextRank = 'Diamond'; prevTarget = sGold;    nextTarget = sDiamond; }
+    else if (cRank === 'Diamond') { nextRank = 'VIP';     prevTarget = sDiamond; nextTarget = sVip; }
+    else                          { nextRank = null;      prevTarget = sVip;     nextTarget = sVip; }
+
+    let pct = 100;
+    let progressText = 'Đã đạt hạng thẻ cao nhất hệ thống (VIP)';
+    if (nextRank && nextTarget > prevTarget) {
+        pct = Math.min(100, Math.max(4, Math.round(((cSpent - prevTarget) / (nextTarget - prevTarget)) * 100)));
+        let remain = Math.max(0, nextTarget - cSpent);
+        progressText = `Chi tiêu thêm ${remain.toLocaleString()} đ để lên hạng ${nextRank}`;
+    }
+
+    let progressBarEl = document.getElementById('crm-modal-progress-bar');
+    if (progressBarEl) progressBarEl.style.width = pct + '%';
+
+    let progressTxtEl = document.getElementById('crm-modal-progress-text');
+    if (progressTxtEl) {
+        progressTxtEl.innerText = progressText;
+        progressTxtEl.style.color = '#f8fafc';
+        progressTxtEl.style.fontWeight = '600';
     }
 
     let billPreview = getBillAmountBeforePointRedeem();
     document.getElementById('crm-modal-bill-total').innerText = billPreview.toLocaleString() + " đ";
-    document.getElementById('manual-redeem-pts').value = (appliedPointsDiscount > 0) ? Math.round(appliedPointsDiscount / 100) : '';
+    document.getElementById('manual-redeem-pts').value = (appliedPointsDiscount > 0) ? Math.round(appliedPointsDiscount / redeemRate) : '';
 
-    renderTierRewardsInModal(cRank, availPts);
     if (crmMemberModal) crmMemberModal.show();
+    renderTierRewardsInModal(cRank, availPts);
 }
 
-// TỰ ĐỘNG LÀM TRÒN TIỀN BẰNG ĐIỂM (VD: 105.500đ -> tự dùng 5 điểm trừ 500đ còn 105.000đ)
+// TỰ ĐỘNG LÀM TRÒN TIỀN BẰNG ĐIỂM
 function autoRoundBillWithPoints() {
     if (!selectedCustomer) return;
 
     let availPts = Math.max(0, parseInt(selectedCustomer.total_points || 0) - pointsToRedeem);
     let billAmount = getBillAmountBeforePointRedeem();
     let hintEl = document.getElementById('crm-auto-round-hint');
+    let redeemRate = Math.max(1, parseFloat(posLoyaltySettings.vnd_per_point_redeem || 100));
 
     if (billAmount <= 0 || availPts <= 0) {
         if (hintEl) hintEl.innerHTML = `<span class="text-danger fw-semibold">Không đủ điểm tiêu dùng hoặc đơn hàng đang bằng 0đ.</span>`;
         return;
     }
 
-    // Lấy phần tiền lẻ hàng trăm/nghìn (ưu tiên làm tròn về hàng nghìn, nếu đã chẵn nghìn thì làm tròn về hàng chục nghìn)
     let oddAmount = billAmount % 1000;
     if (oddAmount === 0) {
         oddAmount = billAmount % 10000;
@@ -1445,9 +1525,9 @@ function autoRoundBillWithPoints() {
         return;
     }
 
-    let neededPts = Math.ceil(oddAmount / 100);
+    let neededPts = Math.ceil(oddAmount / redeemRate);
     let ptsToUse = Math.min(neededPts, availPts);
-    let discountMoney = ptsToUse * 100;
+    let discountMoney = ptsToUse * redeemRate;
     let finalRoundedBill = Math.max(0, billAmount - discountMoney);
 
     document.getElementById('manual-redeem-pts').value = ptsToUse;
@@ -1462,6 +1542,7 @@ function applyManualPointsRedeem() {
     let inputPts = parseInt(document.getElementById('manual-redeem-pts').value || 0);
     let giftPtsUsed = redeemedGiftsList.reduce((sum, g) => sum + g.points, 0);
     let availablePts = Math.max(0, parseInt(selectedCustomer.total_points || 0) - giftPtsUsed);
+    let redeemRate = Math.max(1, parseFloat(posLoyaltySettings.vnd_per_point_redeem || 100));
 
     if (isNaN(inputPts) || inputPts <= 0) {
         showCustomAlert("Vui lòng nhập số điểm tiêu dùng muốn áp dụng hợp lệ!", "Lỗi Nhập Điểm", "danger");
@@ -1474,11 +1555,11 @@ function applyManualPointsRedeem() {
     }
 
     let billBeforePts = getBillAmountBeforePointRedeem();
-    let discountMoney = inputPts * 100;
+    let discountMoney = inputPts * redeemRate;
 
     if (discountMoney > billBeforePts) {
         discountMoney = billBeforePts;
-        inputPts = Math.ceil(billBeforePts / 100);
+        inputPts = Math.ceil(billBeforePts / redeemRate);
     }
 
     appliedPointsDiscount = discountMoney;
@@ -1511,22 +1592,48 @@ function clearPointsRedeem() {
     renderCart();
 }
 
-function renderTierRewardsInModal(customerRank, availPts) {
+async function renderTierRewardsInModal(customerRank, availPts) {
     let container = document.getElementById('crm-tier-rewards-container');
     if (!container) return;
 
+    container.innerHTML = `<div class="text-center text-muted py-4 small">Đang tải danh sách quà đổi điểm...</div>`;
+
+    let rewardList = TIER_REWARD_ITEMS;
+    try {
+        const res = await fetch(BASE_URL_JS + '/order/getRewards').then(r => r.json());
+        if (res.success && Array.isArray(res.rewards) && res.rewards.length > 0) {
+            rewardList = res.rewards.map(r => ({
+                id: r.id,
+                name: r.reward_name,
+                points: parseInt(r.points_required || 0, 10),
+                minRank: r.min_rank || 'Bronze',
+                desc: r.description || 'Ưu đãi hội viên Smart F&B',
+                stock: parseInt(r.stock ?? 999, 10)
+            }));
+        }
+    } catch (e) {}
+
+    const REWARD_RANK_BADGES = {
+        Bronze:  'background:#fef3c7; color:#92400e; border:1px solid #fde68a;',
+        Silver:  'background:#f1f5f9; color:#334155; border:1px solid #cbd5e1;',
+        Gold:    'background:#fef08a; color:#854d0e; border:1px solid #facc15;',
+        Diamond: 'background:#e0f2fe; color:#0369a1; border:1px solid #7dd3fc;',
+        VIP:     'background:#0f172a; color:#fbbf24; border:1px solid #f59e0b;'
+    };
+
     let userLevel = TIER_LEVEL_ORDER[customerRank] || 1;
-    container.innerHTML = TIER_REWARD_ITEMS.map(item => {
+    container.innerHTML = rewardList.map(item => {
         let reqLevel = TIER_LEVEL_ORDER[item.minRank] || 1;
         let isUnlocked = userLevel >= reqLevel;
-        let canRedeem = isUnlocked && availPts >= item.points;
+        let inStock = (item.stock === undefined || item.stock > 0);
+        let canRedeem = isUnlocked && inStock && availPts >= item.points;
 
         return `
             <div class="d-flex justify-content-between align-items-center p-2 border rounded-3 ${isUnlocked ? 'bg-white' : 'bg-light opacity-75'}">
                 <div class="pe-2">
                     <div class="d-flex align-items-center gap-1">
                         <span class="fw-bold text-dark" style="font-size: 12.5px;">${item.name}</span>
-                        <span class="badge ${isUnlocked ? 'bg-primary-subtle text-primary' : 'bg-secondary-subtle text-secondary'}" style="font-size: 9.5px;">${item.minRank}</span>
+                        <span class="badge rounded-pill" style="font-size: 9.5px; ${REWARD_RANK_BADGES[item.minRank] || REWARD_RANK_BADGES.Bronze}">${item.minRank}</span>
                     </div>
                     <small class="text-muted d-block" style="font-size: 11px;">${item.desc}</small>
                 </div>
@@ -1537,8 +1644,8 @@ function renderTierRewardsInModal(customerRank, availPts) {
                         ? `<span class="badge bg-secondary text-white" style="font-size: 10px;"><i class="bi bi-lock-fill me-1"></i>Cần hạng ${item.minRank}</span>`
                         : `<button type="button" class="btn btn-sm ${canRedeem ? 'btn-warning text-dark' : 'btn-outline-secondary'} fw-bold rounded-pill px-3 saas-btn-nowrap"
                                 style="font-size: 11px;" ${canRedeem ? '' : 'disabled'}
-                                onclick="redeemPhysicalGift('${item.name}', ${item.points})">
-                                ${canRedeem ? 'Đổi Quà' : 'Thiếu điểm'}
+                                onclick="redeemPhysicalGift('${item.name.replace(/'/g, "\\'")}', ${item.points})">
+                                ${!inStock ? 'Hết quà' : (canRedeem ? 'Đổi Quà' : 'Thiếu điểm')}
                            </button>`
                     }
                 </div>
@@ -1652,8 +1759,8 @@ function sendToKitchen() {
         if (tableBadge) {
             tableBadge.className = "table-badge status-occupied active";
             tableBadge.querySelector('.status-label').innerText = "Có khách";
-            syncTableStatusToDB(currentTableId, 'occupied');
         }
+        persistTableOrderStateToDB(currentTableId, 'occupied', cart);
     }
 
     let itemsToPrint = [];
@@ -1698,6 +1805,11 @@ function executeStickerPrint() {
         item.printedQty = item.qty;
     });
 
+    if (typeof currentTableId === 'number') {
+        activeOrders[currentTableId] = cart;
+        persistTableOrderStateToDB(currentTableId, 'occupied', cart);
+    }
+
     stickerPrintModal.hide();
     renderCart();
     showCustomAlert("Lệnh in tem chế biến dán ly đã được gửi thành công!", "Thành Công", "success");
@@ -1705,8 +1817,20 @@ function executeStickerPrint() {
 
 function notifyKitchenReady() {
     if (!currentTableId || cart.length === 0) return;
+
+    activeOrders[currentTableId] = cart;
+
+    if (typeof currentTableId === 'number') {
+        let tableBadge = document.getElementById('table-btn-' + currentTableId);
+        if (tableBadge) {
+            tableBadge.className = "table-badge status-occupied active";
+            tableBadge.querySelector('.status-label').innerText = "Có khách";
+        }
+        persistTableOrderStateToDB(currentTableId, 'occupied', cart);
+    }
+
     let pagerNumber = Math.floor(Math.random() * 20) + 1;
-    showCustomAlert(`Phát tín hiệu thông báo hoàn tất món ăn cho Thẻ báo số [${pagerNumber}]!`, "Thông Báo Khách Hàng", "info");
+    showCustomAlert(`Đã báo bếp chế biến, chuyển bàn sang Có khách và phát tín hiệu cho Thẻ báo số [${pagerNumber}]!`, "Báo Bếp & In Thẻ Thành Công", "success");
 }
 
 function setQuickCashAmount(amount) {
@@ -1738,7 +1862,8 @@ function openCheckoutModal(isDirect = false) {
         let remainingAfterPoints = Math.max(0, baseGrandTotal - pointsDiscountMoney);
 
         if (selectedCustomer) {
-            let discountPercent = selectedCustomer.discount_percent || 0;
+            let tierName = selectedCustomer.member_rank || 'Bronze';
+            let discountPercent = parseFloat(selectedCustomer.discount_percent || posLoyaltySettings[`${tierName.toLowerCase()}_discount`] || 0);
             if (discountPercent > 0) tierDiscountMoney = Math.round(remainingAfterPoints * (discountPercent / 100));
         }
     }
@@ -1841,7 +1966,8 @@ function calculateChange() {
         let remainingAfterPoints = Math.max(0, baseGrandTotal - pointsDiscountMoney);
 
         if (selectedCustomer) {
-            let discountPercent = selectedCustomer.discount_percent || 0;
+            let tierName = selectedCustomer.member_rank || 'Bronze';
+            let discountPercent = parseFloat(selectedCustomer.discount_percent || posLoyaltySettings[`${tierName.toLowerCase()}_discount`] || 0);
             if (discountPercent > 0) tierDiscountMoney = Math.round(remainingAfterPoints * (discountPercent / 100));
         }
     }
@@ -1879,7 +2005,8 @@ function processCheckout() {
         let remainingAfterPoints = Math.max(0, baseGrandTotal - pointsDiscountMoney);
 
         if (selectedCustomer) {
-            let discountPercent = selectedCustomer.discount_percent || 0;
+            let tierName = selectedCustomer.member_rank || 'Bronze';
+            let discountPercent = parseFloat(selectedCustomer.discount_percent || posLoyaltySettings[`${tierName.toLowerCase()}_discount`] || 0);
             if (discountPercent > 0) tierDiscountMoney = Math.round(remainingAfterPoints * (discountPercent / 100));
         }
     }
@@ -1933,7 +2060,6 @@ function processCheckout() {
 function finishPaymentSuccess(paidGrandTotal, payMethod) {
     checkoutModal.hide();
 
-    // Cập nhật hiển thị tồn kho trên thẻ sản phẩm tại UI sau khi trừ kho
     cart.forEach(soldItem => {
         if (soldItem.manage_stock === 1 && !soldItem.is_gift) {
             let cardEl = document.querySelector(`.product-item[data-product-id="${soldItem.id}"]`);
@@ -1991,6 +2117,7 @@ function finishPaymentSuccess(paidGrandTotal, payMethod) {
                     tableBadge.querySelector('.status-label').innerText = "Đã thanh toán";
                 }
             }
+            syncTableStatusToDB(currentTableId, 'paid', true);
             document.getElementById('btn-release-table').classList.remove('d-none');
         } 
         else {
@@ -2594,7 +2721,7 @@ function confirmMergeTable() {
             sourceBadge.className = "table-badge status-occupied";
             sourceBadge.querySelector('.status-label').innerText = `Có khách (Gộp -> ${targetName})`;
         }
-        syncTableStatusToDB(parseInt(sourceId), 'occupied');
+        persistTableOrderStateToDB(parseInt(sourceId), 'occupied', []);
     } else {
         if (sourceBadge) {
             sourceBadge.className = "table-badge status-available";
@@ -2607,7 +2734,7 @@ function confirmMergeTable() {
         targetBadge.className = "table-badge status-occupied active";
         targetBadge.querySelector('.status-label').innerText = "Có khách";
     }
-    syncTableStatusToDB(parseInt(targetId), 'occupied');
+    persistTableOrderStateToDB(parseInt(targetId), 'occupied', activeOrders[targetId] || []);
 
     currentTableId = parseInt(targetId);
     document.getElementById('selected-table-name').innerText = targetName;
@@ -2744,6 +2871,7 @@ function confirmSplitTable() {
         syncTableStatusToDB(parseInt(sourceId), 'available');
     } else {
         activeOrders[sourceId] = itemsToKeep;
+        persistTableOrderStateToDB(parseInt(sourceId), 'occupied', itemsToKeep);
     }
 
     let targetName = targetBadge ? targetBadge.querySelector('.fw-bold').innerText : ('Bàn ' + targetId);
@@ -2751,7 +2879,7 @@ function confirmSplitTable() {
         targetBadge.className = "table-badge status-occupied active";
         targetBadge.querySelector('.status-label').innerText = "Có khách";
     }
-    syncTableStatusToDB(parseInt(targetId), 'occupied');
+    persistTableOrderStateToDB(parseInt(targetId), 'occupied', activeOrders[targetId]);
 
     currentTableId = parseInt(targetId);
     document.getElementById('selected-table-name').innerText = targetName;
@@ -2984,11 +3112,18 @@ function confirmCloseShift() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             shift_id: currentShiftInfo.shift_id,
+            total_revenue: shiftStats.totalRevenue,
+            offline_revenue: shiftStats.offlineRevenue,
+            online_revenue: shiftStats.onlineRevenue,
+            total_cash_sales: shiftStats.totalCashSales,
+            total_bank_sales: shiftStats.totalBankSales,
+            total_app_sales: shiftStats.totalAppSales,
             ending_cash_actual: actualCash,
-            cash_diff: diff,
-            cash_diff_reason: diffReason,
-            retained_cash_next: retainedCash,
-            handover_cash: handoverCash
+            retained_cash: retainedCash,
+            variance_note: diffReason,
+            total_orders: shiftStats.totalOrders,
+            total_cups: shiftStats.totalCups,
+            total_cakes: shiftStats.totalCakes
         })
     })
     .then(res => res.json())
@@ -3075,13 +3210,16 @@ function searchCustomerByPhone(silent = false) {
     const phone = phoneInput ? phoneInput.value.trim() : '';
 
     if (phone.length < 10) {
-        if (!silent) showCustomAlert("Vui lòng nhập số điện thoại 10 chữ số để tra cứu!", "SĐT Không Hợp Lệ", "danger");
+        if (!silent) showCustomAlert("Vui lòng nhập số điện thoại để tra cứu!", "SĐT Không Hợp Lệ", "danger");
         return;
     }
 
     fetch(BASE_URL_JS + '/order/searchCustomer?phone=' + encodeURIComponent(phone))
         .then(res => res.json())
         .then(res => {
+            if (res.loyalty_settings) {
+                posLoyaltySettings = { ...posLoyaltySettings, ...res.loyalty_settings };
+            }
             if (res.success && res.customer) {
                 selectedCustomer = res.customer;
                 displayCustomerInfo(res.customer);
@@ -3144,27 +3282,46 @@ function openRegisterCustomerModal() {
     if (!registerCustomerModal) return;
     document.getElementById('reg-cust-phone').value = document.getElementById('cust-phone-input')?.value.trim() || '';
     document.getElementById('reg-cust-name').value = '';
+    if (document.getElementById('reg-cust-dob')) document.getElementById('reg-cust-dob').value = '';
+    if (document.getElementById('reg-cust-email')) document.getElementById('reg-cust-email').value = '';
+    if (document.getElementById('reg-cust-address')) document.getElementById('reg-cust-address').value = '';
     registerCustomerModal.show();
 }
 
 function confirmRegisterCustomer() {
-    const phone = document.getElementById('reg-cust-phone').value.trim();
-    const name = document.getElementById('reg-cust-name').value.trim();
+    const phone   = document.getElementById('reg-cust-phone').value.trim();
+    const name    = document.getElementById('reg-cust-name').value.trim();
+    const dob     = document.getElementById('reg-cust-dob') ? document.getElementById('reg-cust-dob').value : '';
+    const email   = document.getElementById('reg-cust-email') ? document.getElementById('reg-cust-email').value.trim() : '';
+    const address = document.getElementById('reg-cust-address') ? document.getElementById('reg-cust-address').value.trim() : '';
 
     if (phone.length < 10 || !name) {
         showCustomAlert("Vui lòng nhập đầy đủ SĐT (10 số) và Họ tên khách hàng!", "Thiếu Thông Tin", "danger");
         return;
     }
 
-    fetch(BASE_URL_JS + '/order/registerCustomer', {
+    fetch(BASE_URL_JS + '/customer/saveCustomer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone, customer_name: name })
+        body: JSON.stringify({
+            phone: phone,
+            customer_name: name,
+            dob: dob,
+            email: email,
+            address: address,
+            member_rank: 'Bronze'
+        })
     })
     .then(res => res.json())
     .then(res => {
         if (res.success && res.customer) {
             registerCustomerModal.hide();
+            document.getElementById('reg-cust-phone').value = '';
+            document.getElementById('reg-cust-name').value  = '';
+            if (document.getElementById('reg-cust-dob')) document.getElementById('reg-cust-dob').value = '';
+            if (document.getElementById('reg-cust-email')) document.getElementById('reg-cust-email').value = '';
+            if (document.getElementById('reg-cust-address')) document.getElementById('reg-cust-address').value = '';
+
             selectedCustomer = res.customer;
             displayCustomerInfo(res.customer);
             renderCart();
@@ -3176,10 +3333,64 @@ function confirmRegisterCustomer() {
     .catch(err => showCustomAlert("Lỗi kết nối máy chủ!", "Lỗi Hệ Thống", "danger"));
 }
 
+async function restoreActiveTablesFromDB() {
+    try {
+        const res = await fetch(BASE_URL_JS + '/order/getActiveTableStates').then(r => r.json());
+        if (!res.success || !res.tables) return;
+
+        Object.keys(res.tables).forEach(tidStr => {
+            const tid = parseInt(tidStr, 10);
+            const info = res.tables[tidStr];
+            const badge = document.getElementById('table-btn-' + tid);
+            const isCurrent = (String(currentTableId) === String(tid));
+
+            if (info.status === 1) {
+                if (Array.isArray(info.cart) && info.cart.length > 0) {
+                    activeOrders[tid] = info.cart;
+                }
+                if (badge) {
+                    badge.className = 'table-badge status-occupied' + (isCurrent ? ' active' : '');
+                    const lbl = badge.querySelector('.status-label');
+                    if (lbl) lbl.innerText = 'Có khách';
+                }
+            } else if (info.status === 3) {
+                delete activeOrders[tid];
+                if (badge) {
+                    badge.className = 'table-badge status-paid' + (isCurrent ? ' active' : '');
+                    const lbl = badge.querySelector('.status-label');
+                    if (lbl) lbl.innerText = 'Đã thanh toán';
+                }
+            }
+        });
+
+        if (typeof currentTableId === 'number') {
+            loadCartForCurrentTable();
+            updateCheckoutButton();
+        }
+    } catch (e) {
+        console.error('Lỗi khôi phục trạng thái bàn từ DB:', e);
+    }
+}
+
+function persistTableOrderStateToDB(tableId, statusStr, itemsList) {
+    if (!tableId || typeof tableId !== 'number') return;
+    fetch(BASE_URL_JS + '/order/syncTableOrderState', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            table_id: tableId,
+            status: statusStr,
+            items: itemsList || [],
+            shift_id: currentShiftInfo.shift_id || null,
+            vat_percent: currentVatPercent
+        })
+    }).catch(err => console.error('Lỗi lưu trạng thái bàn & giỏ hàng:', err));
+}
+
 function syncTableStatusToDB(tableId, statusStr, allowOverrideReserved = false) {
     if (!tableId || typeof tableId !== 'number') return;
 
-    if (!allowOverrideReserved && statusStr !== 'reserved') {
+    if (!allowOverrideReserved && statusStr !== 'reserved' && statusStr !== 'paid') {
         let nextRes = getNextReservationForTable(tableId);
         if (nextRes && statusStr === 'available') {
             let now = new Date();
@@ -3216,7 +3427,8 @@ function sendOrderToMySQLBackend(extraData = {}) {
         let remainingAfterPoints = Math.max(0, baseGrandTotal - pointsDiscountMoney);
 
         if (selectedCustomer) {
-            let discountPercent = selectedCustomer.discount_percent || 0;
+            let tierName = selectedCustomer.member_rank || 'Bronze';
+            let discountPercent = parseFloat(selectedCustomer.discount_percent || posLoyaltySettings[`${tierName.toLowerCase()}_discount`] || 0);
             if (discountPercent > 0) tierDiscountMoney = Math.round(remainingAfterPoints * (discountPercent / 100));
         }
     }
@@ -3236,7 +3448,7 @@ function sendOrderToMySQLBackend(extraData = {}) {
         final_amount: grandTotal,
         customer_pay: given,
         change_amount: Math.max(0, given - grandTotal),
-        points_earned: (currentOrderType !== 'online') ? Math.floor(grandTotal / 10000) : 0,
+        points_earned: calculateEarnedPoints(grandTotal, selectedCustomer),
         points_redeemed: (currentOrderType !== 'online') ? pointsToRedeem : 0,
         payment_method: extraData.payment_method || 'cash',
         app_order_code: extraData.app_order_code || null,
